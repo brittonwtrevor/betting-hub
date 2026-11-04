@@ -7,7 +7,7 @@ import { navigation } from './app/navigation';
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.scrollTo = jest.fn();
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [] }) });
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [], partners: [] }) });
 });
 afterEach(() => { delete global.fetch; });
 

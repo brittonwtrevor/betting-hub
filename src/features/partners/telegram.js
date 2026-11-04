@@ -1,5 +1,5 @@
 // Store a channel reference only; saving a partner never contacts Telegram.
-export function normalizeTelegramChannel(value) {
+function normalizeTelegramChannel(value) {
   const channel = value.trim();
   if (!channel) return '';
   if (/^-\d+$/.test(channel)) return channel;
@@ -15,3 +15,4 @@ export function normalizeTelegramChannel(value) {
   if (/^\/(?:\+|joinchat\/)[a-zA-Z0-9_-]+$/.test(path)) return `https://t.me${path}`;
   throw new Error('Enter a channel link, rather than a link to an individual Telegram message.');
 }
+module.exports = { normalizeTelegramChannel };

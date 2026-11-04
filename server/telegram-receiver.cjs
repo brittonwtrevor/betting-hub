@@ -1,4 +1,5 @@
 const { mysqlOptions } = require('./lol.cjs');
+const { messageImage } = require('./telegram-media.cjs');
 
 const POLL_INTERVAL_MS = 10000;
 const messageKinds = ['message', 'edited_message', 'channel_post', 'edited_channel_post'];
@@ -136,6 +137,19 @@ function createTelegramReceiver({ telegramService, sendsService, env = process.e
   }
   return {
     poll,
+    async readImages(message) {
+      // Read the original event, including events imported before image support.
+      // File IDs or external URLs supplied by clients are never used here.
+      const db = await database();
+      const [[row]] = await db.execute(`SELECT kind, raw_update FROM hub_telegram_inbox
+        WHERE bot_id = ? AND update_id = ? AND chat_id = ? AND message_id = ?`,
+      [message.botId, message.updateId, message.chatId, message.messageId]);
+      if (!row) throw Object.assign(new Error('The original Telegram attachment is unavailable. Resend the screenshot.'), { confirmSafe: true });
+      const original = parseJson(row.raw_update)[row.kind];
+      const image = messageImage(original);
+      if (!image) return [];
+      return [await telegramService.downloadImage({ botId: message.botId, ...image })];
+    },
     start() {
       if (timer || env.TELEGRAM_POLLING_ENABLED === 'false') return;
       stopping = false;

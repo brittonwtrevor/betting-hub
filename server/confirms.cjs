@@ -3,15 +3,18 @@ const { mysqlOptions } = require('./lol.cjs');
 const { normalizeFields } = require('../src/features/bets/confirmationFields');
 const { createConfirmParser, eligibleContexts, partnerFor, defaultFields } = require('./confirm-parser.cjs');
 const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
+const { createConfirmNotifications } = require('./confirm-notifications.cjs');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, confirmSafe: true });
 const sourceId = message => createHash('sha256').update(JSON.stringify([String(message.botId), String(message.chatId), String(message.messageId)])).digest('hex');
 
-function createConfirmsService({ env = process.env, telegramReceiver, sendsService, parser = createConfirmParser({ env }),
+function createConfirmsService({ env = process.env, telegramReceiver, sendsService, telegramService,
+  parser = createConfirmParser({ env, readImages: message => telegramReceiver.readImages(message) }),
   createPool, now = () => new Date(), makeId = randomUUID, logger = console } = {}) {
-  let pool, schema, timer, pending;
+  let pool, schema, timer, pending, notificationTimer, notificationPending;
   let stopping = false;
   let workerError = null;
+  const notifications = createConfirmNotifications({ telegramService, now, logger });
   async function database() {
     if (!pool) pool = (createPool || require('mysql2/promise').createPool)(mysqlOptions(env));
     if (!schema) schema = (async () => {
@@ -34,6 +37,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         INDEX source_history (source_id, id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
       await migrateRecords(pool);
+      await notifications.ensure(pool);
     })().catch(error => { schema = null; throw error; });
     await schema;
     return pool;
@@ -86,6 +90,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
     await connection.execute('INSERT INTO hub_confirm_bets (id, source_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [id, source, JSON.stringify(fields), at, at]);
     await history(connection, source, id, actor === 'AI' ? 'ai_extract' : 'manual_add', null, fields, actor);
+    if (actor === 'AI') await notifications.enqueue(connection, source, id, 1, 'logged', fields);
     return { id, sourceId: source, revision: 1, createdAt: at, updatedAt: at, ...fields };
   }
   async function runWorker() {
@@ -143,24 +148,44 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
       }
     }
   }
+  function notificationTick() {
+    if (stopping || !telegramService) return Promise.resolve();
+    if (!notificationPending) notificationPending = (async () => {
+      try { await notifications.flush(await database()); } catch { /* The next scheduled pass retries storage access. */ }
+    })().finally(() => { notificationPending = null; });
+    return notificationPending;
+  }
   function tick() {
     if (stopping) return Promise.resolve();
-    if (!pending) pending = runWorker().finally(() => { pending = null; });
+    if (!pending) pending = (async () => {
+      await runWorker();
+      await notificationTick();
+    })().finally(() => { pending = null; });
     return pending;
   }
   return {
     tick,
-    start() { if (timer) return; stopping = false; timer = setInterval(() => { void tick(); }, 10000); timer.unref?.(); void tick(); },
+    start() {
+      if (timer) return;
+      stopping = false;
+      timer = setInterval(() => { void tick(); }, 10000); timer.unref?.();
+      // Grade receipts must not wait behind a slow batch of LLM requests.
+      notificationTimer = setInterval(() => { void notificationTick(); }, 10000); notificationTimer.unref?.();
+      void tick(); void notificationTick();
+    },
     async list() {
       const receiver = await sync();
       const db = await database();
       const [sources] = await db.query('SELECT * FROM hub_confirm_sources ORDER BY updated_at DESC, id LIMIT 100');
       const ids = sources.map(row => row.id);
       const [bets] = ids.length ? await db.execute(`SELECT * FROM hub_confirm_bets WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, id`, ids) : [[]];
+      const [receipts] = ids.length ? await db.execute(`SELECT id, bet_row_id, kind, status, last_error, updated_at FROM hub_confirm_notifications
+        WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, bet_revision, id`, ids) : [[]];
       return { sources: sources.map(row => ({ id: row.id, revision: row.revision, status: row.status, ...decode(row.payload),
         error: row.last_error, deletedBetCount: bets.filter(bet => bet.source_id === row.id && decode(bet.payload).deletedAt).length,
         bets: bets.filter(bet => bet.source_id === row.id && !decode(bet.payload).deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
-          revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...decode(bet.payload) })) })),
+          revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...decode(bet.payload),
+          notifications: receipts.filter(receipt => receipt.bet_row_id === bet.id).map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at })) })) })),
       receiver, parser: { configured: parser.configured(), enabled: env.DO_INFERENCE_ENABLED !== 'false', model: parser.model(), error: workerError } };
     },
     async update(id, input, actor = 'app') {
@@ -191,6 +216,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
           gradedAt: fields.grade === 'UNGRADED' ? null : regraded ? at : before.gradedAt };
         await connection.execute('UPDATE hub_confirm_bets SET payload = ?, revision = revision + 1, updated_at = ? WHERE id = ?', [JSON.stringify(fields), now().toISOString(), id]);
         await history(connection, row.source_id, id, before.grade !== fields.grade || before.pl !== fields.pl ? 'grade' : 'edit', before, fields, actor);
+        if (regraded) await notifications.enqueue(connection, row.source_id, id, row.revision + 1, 'grade', fields);
         return { id, sourceId: row.source_id, revision: row.revision + 1, createdAt: row.created_at, updatedAt: at, ...fields };
       });
     },
@@ -232,7 +258,8 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
       });
       return { queued: true };
     },
-    async close() { stopping = true; clearInterval(timer); timer = null; if (pending) await pending; if (pool) await pool.end(); },
+    async close() { stopping = true; clearInterval(timer); clearInterval(notificationTimer); timer = null;
+      await Promise.all([pending, notificationPending]); if (pool) await pool.end(); },
   };
 }
 module.exports = { createConfirmsService, sourceId };

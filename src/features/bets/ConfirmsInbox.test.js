@@ -16,6 +16,7 @@ beforeEach(() => {
   stored = { sources: [{ id, revision: 2, status: 'parsed', message: reply, partner: { name: 'Trevor' }, issues: [], bets: [{ ...base }] }],
     receiver: { enabled: true, lastPolledAt: new Date().toISOString() }, parser: { configured: true, enabled: true } };
   global.fetch = jest.fn(async (url, options = {}) => {
+    if (url === '/api/partners') return response({ partners: [] });
     if (url === '/api/send-drafts') return response({ drafts: [] });
     if (options.method === 'PATCH') {
       const input = JSON.parse(options.body);
@@ -34,15 +35,19 @@ beforeEach(() => {
   });
 });
 
-test('shows partner, sender and dates and saves bettor/date corrections on the current bet', async () => {
-  render(<ConfirmsInbox />); await screen.findByLabelText('Bettor for bet-1');
-  expect(screen.getByLabelText('Bettor for bet-1')).toHaveValue('Trevor Britton');
-  expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveValue('2026-11-04');
-  expect(screen.getByText('Sender: @TrevorBRedSox · 123')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Bettor for bet-1'), { target: { value: 'Luke' } });
-  fireEvent.change(screen.getByLabelText('Bet date (ET) for bet-1'), { target: { value: '2026-11-03' } });
+test('shows partner and read-only bet details, hides bettor, and preserves metadata when saving', async () => {
+  render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
+  expect(screen.getByLabelText('Bet ID for bet-1')).toHaveTextContent('HAN187');
+  expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveTextContent('2026-11-04');
+  expect(screen.getByLabelText('Game for bet-1')).toHaveTextContent(base.game);
+  for (const label of ['Bet ID', 'Bet date (ET)', 'Game']) expect(screen.getByLabelText(`${label} for bet-1`)).not.toHaveAttribute('contenteditable');
+  expect(screen.queryByRole('textbox', { name: /Bet ID|Bet date|Game/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('columnheader', { name: 'BETTOR' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Bettor for bet-1')).not.toBeInTheDocument();
+  expect(screen.getByRole('cell', { name: 'Trevor' })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Risk for bet-1'), { target: { value: '250' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
-  await waitFor(() => expect(stored.sources[0].bets[0]).toMatchObject({ id: base.id, bettorName: 'Luke', betDate: '2026-11-03', partnerId: 'trevor' }));
+  await waitFor(() => expect(stored.sources[0].bets[0]).toMatchObject({ id: base.id, betId: base.betId, game: base.game, bettorName: base.bettorName, betDate: base.betDate, partnerId: 'trevor', risk: 250 }));
 });
 
 test('deletion can be cancelled, removes only the selected bet, and polling does not restore it', async () => {
@@ -75,10 +80,21 @@ test('a failed delete keeps the saved bet visible with an error', async () => {
 });
 afterEach(() => { delete global.fetch; jest.useRealTimers(); });
 
-test('loads six editable fields, grading options and original source without credential controls or all-messages filter', async () => {
+test('shows queued and failed Telegram receipts and refreshes their delivery status', async () => {
+  stored.sources[0].bets[0].notifications = [{ id: 'receipt-1', kind: 'logged', status: 'pending' },
+    { id: 'receipt-2', kind: 'grade', status: 'error', error: 'Bot cannot access that chat.' }];
+  render(<ConfirmsInbox />);
+  expect(await screen.findByText('Telegram log: Queued')).toBeInTheDocument();
+  expect(screen.getByText(/Telegram grade: Delivery failed/)).toHaveTextContent('Bot cannot access that chat.');
+  stored.sources[0].bets[0].notifications[0].status = 'sent';
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh replies' }));
+  expect(await screen.findByText('Telegram log: Sent')).toBeInTheDocument();
+});
+
+test('loads editable wager fields, grading options and original source without credential controls or all-messages filter', async () => {
   render(<ConfirmsInbox />);
   await screen.findByLabelText('Bet ID for bet-1');
-  for (const [label, value] of [['Bet ID', 'HAN187'], ['Game', base.game], ['Team', base.team], ['Bet', 'Moneyline'], ['Risk', '1'], ['Odds', '-110']]) expect(screen.getByLabelText(`${label} for bet-1`)).toHaveValue(value);
+  for (const [label, value] of [['Team', base.team], ['Bet', 'Moneyline'], ['Risk', '1'], ['Odds', '-110']]) expect(screen.getByLabelText(`${label} for bet-1`)).toHaveValue(value);
   const grade = screen.getByRole('combobox', { name: 'Grade for bet-1' });
   expect(within(grade).getAllByRole('option').map(option => option.value)).toEqual(['UNGRADED', 'VOID', 'WIN', 'LOSS', 'PARTRETURN']);
   expect(screen.getByLabelText('P/L for bet-1')).toHaveTextContent('—');
@@ -87,14 +103,14 @@ test('loads six editable fields, grading options and original source without cre
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });
 
-test('edits all six fields, saves a WIN and persists net P/L', async () => {
+test('edits wager fields, saves a WIN and persists net P/L', async () => {
   render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
-  for (const [label, value] of [['Bet ID', 'BOS145'], ['Game', 'Other game'], ['Team', 'Other team'], ['Bet', 'Spread -1.5'], ['Risk', '500'], ['Odds', '+150']]) fireEvent.change(screen.getByLabelText(`${label} for bet-1`), { target: { value } });
+  for (const [label, value] of [['Team', 'Other team'], ['Bet', 'Spread -1.5'], ['Risk', '500'], ['Odds', '+150']]) fireEvent.change(screen.getByLabelText(`${label} for bet-1`), { target: { value } });
   fireEvent.change(screen.getByLabelText('Grade for bet-1'), { target: { value: 'WIN' } });
   expect(screen.getByLabelText('P/L for bet-1')).toHaveTextContent('+$750.00');
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled());
-  expect(stored.sources[0].bets[0]).toMatchObject({ betId: 'BOS145', game: 'Other game', team: 'Other team', bet: 'Spread -1.5', risk: 500, odds: 150, grade: 'WIN', pl: 750 });
+  expect(stored.sources[0].bets[0]).toMatchObject({ betId: base.betId, game: base.game, team: 'Other team', bet: 'Spread -1.5', risk: 500, odds: 150, grade: 'WIN', pl: 750 });
   const patch = fetch.mock.calls.find(([, options]) => options.method === 'PATCH');
   expect(patch[1].headers['X-Betting-Hub']).toBe('confirms');
 });
@@ -155,7 +171,7 @@ test('keeps loaded data visible after an inbox refresh failure', async () => {
   fetch.mockResolvedValueOnce(response({ message: 'Database temporarily unavailable.' }, false));
   fireEvent.click(screen.getByRole('button', { name: 'Refresh replies' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Previously loaded replies remain below.');
-  expect(screen.getByLabelText('Bet ID for bet-1')).toHaveValue('HAN187');
+  expect(screen.getByLabelText('Bet ID for bet-1')).toHaveTextContent('HAN187');
 });
 
 test('Confirms deep links and old Telegram bookmarks open the editable bet table without a Telegram tab', async () => {

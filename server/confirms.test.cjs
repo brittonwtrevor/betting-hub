@@ -10,7 +10,7 @@ const original = { botId: '1', chatId: '-5550868176', chat: 'trevor_partner', fr
   receivedAt: '2026-11-04T18:17:00.000Z', date: '2026-11-04T18:17:00.000Z', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], contexts: [{ betId: 'HAN187', context }] };
 const extraction = { bets: [{ betId: 'HAN187', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110 }], issues: [] };
 function fixture(options = {}) {
-  let data = { sources: {}, bets: {}, audit: [] };
+  let data = { sources: {}, bets: {}, audit: [], receipts: {} };
   let time = new Date('2026-11-04T18:18:00.000Z');
   let messages = [copy(original)];
   let configured = options.configured ?? true;
@@ -39,7 +39,11 @@ function fixture(options = {}) {
       const [id, source_id, payload, created_at, updated_at] = p;
       if (data.bets[id]) throw new Error('Duplicate bet row');
       data.bets[id] = { id, source_id, payload, created_at, updated_at, revision: 1 };
-    } else if (sql.startsWith('INSERT INTO hub_confirm_history')) data.audit.push(copy(p));
+    } else if (sql.startsWith('INSERT INTO hub_confirm_notifications')) {
+      const [id, bet_row_id, bet_revision, source_id, bot_id, chat_id, kind, payload, created_at, updated_at] = p;
+      data.receipts[id] ||= { id, bet_row_id, bet_revision, source_id, bot_id, chat_id, kind, payload, created_at, updated_at, status: 'pending' };
+    } else if (sql.startsWith('SELECT id, bet_row_id')) return [Object.values(data.receipts).filter(row => p.includes(row.source_id)).map(copy)];
+    else if (sql.startsWith('INSERT INTO hub_confirm_history')) data.audit.push(copy(p));
     else if (sql.startsWith('UPDATE hub_confirm_bets')) {
       Object.assign(data.bets[p[2]], { payload: p[0], updated_at: p[1], revision: data.bets[p[2]].revision + 1 });
     } else if (sql.startsWith("UPDATE hub_confirm_sources SET status = 'processing'")) {
@@ -100,6 +104,10 @@ test('imports, parses, and persists multiple bets once across repeated reads and
   assert.equal(sources[0].bets[0].gameAt, '2026-11-05T00:00:00.000Z');
   assert.equal(sources[0].bets[0].createdAt, '2026-11-04T18:18:00.000Z');
   assert.equal(f.data.audit.length, 2);
+  assert.equal(Object.keys(f.data.receipts).length, 2);
+  const receipt = Object.values(f.data.receipts)[0];
+  assert.equal(receipt.chat_id, '-5550868176');
+  assert.match(JSON.parse(receipt.payload).text, /BET LOGGED/);
   await f.service.tick();
   await f.makeService().tick();
   assert.equal(f.parseCalls, 1);
@@ -161,6 +169,8 @@ test('editing all six fields and grading persists computed P/L with before/after
   const edited = await f.service.update(initial.id, { ...initial, betId: 'BOS145', game: 'Other game', team: 'Other team', bet: 'Spread -1.5', risk: '500', odds: '+150', grade: 'WIN', pl: 999999 }, 'trevor');
   assert.equal(edited.pl, 750);
   assert.equal(edited.revision, 2);
+  const gradeReceipt = Object.values(f.data.receipts).find(row => row.kind === 'grade');
+  assert.match(JSON.parse(gradeReceipt.payload).text, /Grade: WIN\nNet P\/L: \+\$750.00/);
   assert.equal((await f.makeService().list()).sources[0].bets[0].game, 'Other game');
   assert.equal(f.data.audit.at(-1)[2], 'grade');
   assert.equal(f.data.audit.at(-1)[3], 'trevor');
@@ -178,6 +188,19 @@ test('audit failure rolls back the financial edit instead of leaving an unaudite
   await assert.rejects(f.service.update(bet.id, { ...bet, grade: 'LOSS' }));
   f.setFailure(null);
   assert.equal((await f.service.list()).sources[0].bets[0].grade, 'UNGRADED');
+});
+
+test('a receipt queue failure rolls back the grade, and unchanged grades do not enqueue more messages', async () => {
+  const f = fixture(); await f.service.tick();
+  const bet = (await f.service.list()).sources[0].bets[0];
+  f.setFailure(sql => sql.startsWith('INSERT INTO hub_confirm_notifications'));
+  await assert.rejects(f.service.update(bet.id, { ...bet, grade: 'WIN' }));
+  f.setFailure(null);
+  assert.equal((await f.service.list()).sources[0].bets[0].grade, 'UNGRADED');
+  const graded = await f.service.update(bet.id, { ...bet, grade: 'WIN' });
+  const count = Object.keys(f.data.receipts).length;
+  await f.service.update(bet.id, { ...graded, bettorName: 'Luke' });
+  assert.equal(Object.keys(f.data.receipts).length, count);
 });
 
 test('a Telegram edit flags review without overwriting parsed bets, user corrections, or grades', async () => {

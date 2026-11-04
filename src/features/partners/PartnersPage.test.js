@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PartnersPage from './PartnersPage';
 
@@ -15,10 +15,28 @@ const payments = [
   { id: 'a-payment', partnerId: 'a', amount: 30, direction: 'Received', reference: 'A transfer', status: 'Complete' },
   { id: 'b-payment', partnerId: 'b', amount: 40, direction: 'Sent', reference: 'B transfer', status: 'Complete' },
 ];
+let persisted;
+const response = (body, ok = true) => ({ ok, json: async () => body });
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => 'new-partner' } });
+  persisted = [];
+  global.fetch = jest.fn(async (url, options = {}) => {
+    const input = options.body && JSON.parse(options.body);
+    if (url.endsWith('/import')) {
+      for (const partner of input.partners) if (!persisted.some(item => item.id === partner.id)) persisted.push({ ...partner, revision: 1 });
+      return response({ imported: true });
+    }
+    if (options.method === 'POST' || options.method === 'PATCH') {
+      const partner = { ...input, revision: (input.revision || 0) + 1 };
+      persisted = [...persisted.filter(item => item.id !== partner.id), partner];
+      return response({ partner });
+    }
+    return response({ partners: JSON.parse(JSON.stringify(persisted)) });
+  });
 });
+afterEach(() => { delete global.fetch; });
+const ready = () => waitFor(() => expect(screen.getByRole('button', { name: 'Add partner' })).toBeEnabled());
 
 test('all-partners overview drills into a partner and scopes both bets and payments', async () => {
   const user = userEvent.setup();
@@ -42,6 +60,7 @@ test('all-partners overview drills into a partner and scopes both bets and payme
 test('creates a partner tab, prevents duplicate names, and restores tabs on remount', async () => {
   const user = userEvent.setup();
   const { unmount } = render(<PartnersPage />);
+  await ready();
   await user.click(screen.getByRole('button', { name: 'Add partner' }));
   await user.type(screen.getByRole('textbox', { name: 'Partner name' }), '  Sam  ');
   await user.click(screen.getByRole('button', { name: 'Create tab' }));
@@ -52,32 +71,63 @@ test('creates a partner tab, prevents duplicate names, and restores tabs on remo
   await user.click(screen.getByRole('button', { name: 'Create tab' }));
   expect(screen.getByRole('alert')).toHaveTextContent('already has a tab');
   unmount();
+  window.localStorage.clear();
   render(<PartnersPage />);
+  await ready();
   expect(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name: 'Sam', exact: true })).toBeInTheDocument();
 });
 
-test('does not turn missing partner balances into zero amounts', () => {
+test('imports browser partners before removing the backup and preserves their IDs', async () => {
+  window.localStorage.setItem('betting-hub.partner-names.v1', JSON.stringify([{ id: 'local-original', name: 'Trevor', telegramChannel: '@trevor_partner' }]));
+  render(<PartnersPage />); await ready();
+  expect(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name: 'Trevor', exact: true })).toBeInTheDocument();
+  expect(persisted[0]).toMatchObject({ id: 'local-original', name: 'Trevor', telegramChannel: '@trevor_partner' });
+  expect(window.localStorage.getItem('betting-hub.partner-names.v1')).toBeNull();
+  expect(fetch).toHaveBeenCalledWith('/api/partners/import', expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ 'X-Betting-Hub': 'partners' }) }));
+});
+
+test('failed imports keep the browser backup for recovery', async () => {
+  const backup = JSON.stringify([{ id: 'local-original', name: 'Trevor' }]);
+  window.localStorage.setItem('betting-hub.partner-names.v1', backup);
+  fetch.mockRejectedValueOnce(new Error('Partner database unavailable.'));
+  render(<PartnersPage />); await ready();
+  expect(screen.getByRole('alert')).toHaveTextContent('Partner database unavailable');
+  expect(window.localStorage.getItem('betting-hub.partner-names.v1')).toBe(backup);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh partners' }));
+  await within(screen.getByRole('group', { name: 'Partners' })).findByRole('button', { name: 'Trevor', exact: true });
+});
+
+test('database partners still load when browser storage is blocked', async () => {
+  persisted = [{ id: 'saved', name: 'Saved partner', revision: 1 }];
+  const spy = jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Disabled'); });
+  try { render(<PartnersPage />); await ready(); expect(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name: 'Saved partner', exact: true })).toBeInTheDocument(); }
+  finally { spy.mockRestore(); }
+});
+
+test('does not turn missing partner balances into zero amounts', async () => {
   render(<PartnersPage partners={[{ id: 'a', name: 'Unconnected partner' }]} />);
+  await ready();
   const balances = screen.getByRole('table', { name: 'Partner balances' });
   expect(within(balances).queryByText('$0.00')).not.toBeInTheDocument();
   expect(within(balances).getAllByText('—')).toHaveLength(6);
 });
 
-test('handles invalid saved data and reports storage failures without claiming to save', () => {
+test('handles invalid saved data and reports database failures without claiming to save', async () => {
   window.localStorage.setItem('betting-hub.partner-names.v1', 'invalid-json');
   render(<PartnersPage />);
+  await ready();
   fireEvent.click(screen.getByRole('button', { name: 'Add partner' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Partner name' }), { target: { value: 'Sam' } });
-  const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage full'); });
+  fetch.mockRejectedValueOnce(new Error('Unable to save partner.'));
   fireEvent.click(screen.getByRole('button', { name: 'Create tab' }));
-  expect(screen.getByRole('alert')).toHaveTextContent('Unable to save');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to save');
   expect(screen.queryByRole('button', { name: 'Sam', exact: true })).not.toBeInTheDocument();
-  spy.mockRestore();
 });
 
 test('creates a partner with a Telegram channel and persists channel edits and removal', async () => {
   const user = userEvent.setup();
   const { unmount } = render(<PartnersPage />);
+  await ready();
   await user.click(screen.getByRole('button', { name: 'Add partner' }));
   await user.type(screen.getByRole('textbox', { name: 'Partner name' }), 'Sam');
   await user.type(screen.getByRole('textbox', { name: 'Telegram group (optional)' }), 'https://t.me/sam_bets');
@@ -90,19 +140,22 @@ test('creates a partner with a Telegram channel and persists channel edits and r
   expect(screen.getByText('-1001234567890')).toBeInTheDocument();
   unmount();
   render(<PartnersPage />);
+  await ready();
   await user.click(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name: 'Sam' }));
   expect(screen.getByText('-1001234567890')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Edit channel' }));
   await user.clear(screen.getByRole('textbox', { name: 'Telegram channel', exact: true }));
   await user.click(screen.getByRole('button', { name: 'Save channel' }));
   expect(screen.getByText('No channel added')).toBeInTheDocument();
-  expect(JSON.parse(window.localStorage.getItem('betting-hub.partner-names.v1'))[0].telegramChannel).toBe('');
+  expect(persisted[0].telegramChannel).toBe('');
+  expect(window.localStorage.getItem('betting-hub.partner-names.v1')).toBeNull();
 });
 
 test('adds a channel to an existing partner without changing balances or another partner', async () => {
   const user = userEvent.setup();
   window.localStorage.setItem('betting-hub.partner-names.v1', JSON.stringify([{ id: 'a', name: 'Partner A' }]));
   render(<PartnersPage partners={partners} />);
+  await ready();
   await user.click(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name: 'Partner A' }));
   await user.click(screen.getByRole('button', { name: 'Add Telegram channel' }));
   await user.type(screen.getByRole('textbox', { name: 'Telegram channel', exact: true }), '@partner_a');
@@ -117,6 +170,7 @@ test('adds a channel to an existing partner without changing balances or another
 test('rejects an invalid channel before saving the partner', async () => {
   const user = userEvent.setup();
   render(<PartnersPage />);
+  await ready();
   await user.click(screen.getByRole('button', { name: 'Add partner' }));
   await user.type(screen.getByRole('textbox', { name: 'Partner name' }), 'Sam');
   await user.type(screen.getByRole('textbox', { name: 'Telegram group (optional)' }), 'https://example.com/channel');

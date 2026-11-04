@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { normalizeTelegramChannel } from './telegram';
-import { storageKey, readPartners } from './registry';
+import { usePartners } from './usePartners';
 import { EmptyState, InfoNote, Panel, SearchField, Segments, StatGrid } from '../../components/ui';
 
 const views = {
@@ -12,7 +12,8 @@ const currency = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US'
 const date = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 // Connected records can supply published balances without assuming how partners fund bets.
 export default function PartnersPage({ partners: connectedPartners = [], bets = [], payments = [] }) {
-  const [localPartners, setLocalPartners] = useState(readPartners);
+  const registry = usePartners();
+  const localPartners = registry.partners;
   const [partnerId, setPartnerId] = useState('all');
   const [tab, setTab] = useState('balances');
   const [query, setQuery] = useState('');
@@ -23,9 +24,10 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
   const [editingChannel, setEditingChannel] = useState(false);
   const [channelDraft, setChannelDraft] = useState('');
   const [channelError, setChannelError] = useState('');
+  const [saving, setSaving] = useState(false);
   const partners = [...connectedPartners.map(partner => {
     const local = localPartners.find(item => item.id === partner.id || item.name.toLowerCase() === partner.name.toLowerCase());
-    return local ? { ...partner, telegramChannel: local.telegramChannel } : partner;
+    return local ? { ...partner, ...local } : partner;
   }), ...localPartners.filter(local => !connectedPartners.some(partner => partner.id === local.id || partner.name.toLowerCase() === local.name.toLowerCase()))];
   const selected = partners.find(partner => partner.id === partnerId);
   const scopedPartners = selected ? [selected] : partners;
@@ -34,7 +36,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
   const scopedPayments = payments.filter(matchesPartner);
   const partnerName = id => partners.find(partner => partner.id === id)?.name || 'Unknown partner';
   const choosePartner = id => { setPartnerId(id); setEditingChannel(false); setChannelError(''); setQuery(''); setTab(id === 'all' ? 'balances' : 'reports'); };
-  function addPartner(event) {
+  async function addPartner(event) {
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) { setError('Enter a partner name.'); return; }
@@ -42,24 +44,23 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
     let channel;
     try { channel = normalizeTelegramChannel(telegramChannel); }
     catch (validationError) { setError(validationError.message); return; }
-    const partner = { id: `local-${window.crypto.randomUUID()}`, name: trimmed, telegramChannel: channel };
-    const next = [...localPartners, partner];
-    try { window.localStorage.setItem(storageKey, JSON.stringify(next)); }
-    catch { setError('Unable to save this partner in your browser. Please try again.'); return; }
-    setLocalPartners(next); choosePartner(partner.id); setName(''); setTelegramChannel(''); setError(''); setAdding(false);
+    setSaving(true); setError('');
+    try {
+      const partner = await registry.save({ id: window.crypto.randomUUID(), name: trimmed, telegramChannel: channel });
+      choosePartner(partner.id); setName(''); setTelegramChannel(''); setAdding(false);
+    } catch (failure) { setError(failure.message); }
+    finally { setSaving(false); }
   }
-  function saveChannel(event) {
+  async function saveChannel(event) {
     event.preventDefault();
     if (!selected) return;
     let channel;
     try { channel = normalizeTelegramChannel(channelDraft); }
     catch (validationError) { setChannelError(validationError.message); return; }
-    const existing = localPartners.find(partner => partner.id === selected.id || partner.name.toLowerCase() === selected.name.toLowerCase());
-    const updated = { id: selected.id, name: selected.name, telegramChannel: channel };
-    const next = existing ? localPartners.map(partner => partner === existing ? updated : partner) : [...localPartners, updated];
-    try { window.localStorage.setItem(storageKey, JSON.stringify(next)); }
-    catch { setChannelError('Unable to save this channel in your browser. Please try again.'); return; }
-    setLocalPartners(next); setEditingChannel(false); setChannelError('');
+    setSaving(true); setChannelError('');
+    try { await registry.save({ id: selected.id, name: selected.name, telegramChannel: channel, revision: selected.revision }, selected); setEditingChannel(false); }
+    catch (failure) { setChannelError(failure.message); }
+    finally { setSaving(false); }
   }
   const sum = key => scopedPartners.length && scopedPartners.every(partner => Number.isFinite(partner[key])) ? scopedPartners.reduce((total, partner) => total + partner[key], 0) : undefined;
   const view = views[tab];
@@ -77,25 +78,27 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
   return <>
     <div className="partner-toolbar">
       <Segments label="Partners" items={[{ value: 'all', label: 'All Partners' }, ...partners.map(partner => ({ value: partner.id, label: partner.name }))]} value={partnerId} onChange={choosePartner} />
-      <button type="button" className="button button-secondary" onClick={() => { setAdding(!adding); setEditingChannel(false); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button>
+      <div><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={registry.reload}>Refresh partners</button><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { setAdding(!adding); setEditingChannel(false); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button></div>
     </div>
+    {registry.loading && <p role="status">Loading saved partners…</p>}
+    {registry.error && <p role="alert" className="sends-error">{registry.error} Previously loaded partners remain available.</p>}
     {adding && <form id="add-partner" className="partner-form" onSubmit={addPartner}>
       <label htmlFor="partner-name">Partner name</label>
       <div><input autoFocus id="partner-name" value={name} maxLength={80} onChange={event => setName(event.target.value)} aria-describedby={error ? 'partner-error' : 'partner-storage-note'} /></div>
       <label htmlFor="partner-telegram">Telegram group (optional)</label>
-      <div><input id="partner-telegram" value={telegramChannel} maxLength={200} placeholder="@channel, t.me/channel, or -100…" onChange={event => setTelegramChannel(event.target.value)} aria-describedby={error ? 'partner-error' : 'partner-storage-note'} /><button type="submit" className="button button-primary">Create tab</button></div>
-      <p id="partner-storage-note">Partner names and channels are saved in this browser. Telegram syncing is awaiting connection.</p>
+      <div><input id="partner-telegram" value={telegramChannel} maxLength={200} placeholder="@channel, t.me/channel, or -100…" onChange={event => setTelegramChannel(event.target.value)} aria-describedby={error ? 'partner-error' : 'partner-storage-note'} /><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Create tab'}</button></div>
+      <p id="partner-storage-note">Partner names and channels are saved to the shared database and available across devices.</p>
       {error && <p id="partner-error" role="alert">{error}</p>}
     </form>}
     {selected && <section className="partner-channel" aria-label={`${selected.name} Telegram channel`}>
-      <div className="partner-channel-summary"><div><strong>Telegram channel</strong><p>{selected.telegramChannel || 'No channel added'}</p></div><button type="button" className="button button-secondary" aria-expanded={editingChannel} aria-controls="edit-partner-channel" onClick={() => { setEditingChannel(!editingChannel); setChannelDraft(selected.telegramChannel || ''); setChannelError(''); setAdding(false); }}>{editingChannel ? 'Cancel' : selected.telegramChannel ? 'Edit channel' : 'Add Telegram channel'}</button></div>
+      <div className="partner-channel-summary"><div><strong>Telegram channel</strong><p>{selected.telegramChannel || 'No channel added'}</p></div><button type="button" className="button button-secondary" disabled={saving || registry.loading} aria-expanded={editingChannel} aria-controls="edit-partner-channel" onClick={() => { setEditingChannel(!editingChannel); setChannelDraft(selected.telegramChannel || ''); setChannelError(''); setAdding(false); }}>{editingChannel ? 'Cancel' : selected.telegramChannel ? 'Edit channel' : 'Add Telegram channel'}</button></div>
       {editingChannel && <form id="edit-partner-channel" className="partner-form" onSubmit={saveChannel}>
         <label htmlFor="edit-telegram-channel">Telegram channel</label>
-        <div><input autoFocus id="edit-telegram-channel" value={channelDraft} maxLength={200} placeholder="@channel, t.me/channel, or -100…" onChange={event => setChannelDraft(event.target.value)} aria-describedby={channelError ? 'channel-error' : 'channel-help'} aria-invalid={!!channelError} /><button type="submit" className="button button-primary">Save channel</button></div>
+        <div><input autoFocus id="edit-telegram-channel" value={channelDraft} maxLength={200} placeholder="@channel, t.me/channel, or -100…" onChange={event => setChannelDraft(event.target.value)} aria-describedby={channelError ? 'channel-error' : 'channel-help'} aria-invalid={!!channelError} /><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save channel'}</button></div>
         <p id="channel-help">Leave blank to remove the channel. Saving does not send messages or import bets.</p>
         {channelError && <p id="channel-error" role="alert">{channelError}</p>}
       </form>}
-      <p className="partner-channel-note">{selected.telegramChannel ? 'Channel saved · Telegram syncing is not connected' : 'Add a channel username, link, or chat ID for this partner.'}</p>
+      <p className="partner-channel-note">{selected.telegramChannel ? 'Channel saved · Available when selecting this partner in Sends' : 'Add a channel username, link, or chat ID for this partner.'}</p>
     </section>}
     <StatGrid items={[
       selected ? { label: 'Bet records', value: String(scopedBets.length), note: `${selected.name} · ${scopedPayments.length} payment records`, icon: 'users' } : { label: 'Partners', value: String(partners.length), note: 'Select a partner to see their ledger', icon: 'users' },

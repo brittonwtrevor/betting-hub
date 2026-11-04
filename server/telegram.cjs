@@ -1,5 +1,6 @@
 const { createCipheriv, createDecipheriv, randomBytes } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
+const { MAX_IMAGE_BYTES, imageMime } = require('./telegram-media.cjs');
 
 const failure = (message, status = 400) => Object.assign(new Error(message), { status, telegramSafe: true });
 const aad = Buffer.from('betting-hub:telegram:v1');
@@ -133,9 +134,50 @@ function createTelegramService({ env = process.env, createPool, fetchImpl = glob
         allowed_updates: ['message', 'edited_message', 'channel_post', 'edited_channel_post'],
       });
     },
+    async downloadImage({ botId, fileId, fileSize }) {
+      if (typeof fileId !== 'string' || !fileId || fileId.length > 1024) throw failure('The saved Telegram image is unavailable. Resend the screenshot.', 400);
+      if (fileSize > MAX_IMAGE_BYTES) throw failure('The screenshot exceeds 10 MB. Send a smaller JPG, PNG, or WebP image.', 413);
+      const config = await required();
+      if (String(config.bot.id) !== String(botId)) throw failure('This screenshot belongs to a different Telegram bot. Resend it to the current bot.', 409);
+      const file = await call(config.token, 'getFile', { file_id: fileId });
+      // Only Telegram-returned relative paths are allowed. Never expose this token URL
+      // to the browser, model provider, logs, or stored confirmation payloads.
+      if (typeof file?.file_path !== 'string' || !/^[A-Za-z0-9_/-]+\.[A-Za-z0-9]+$/.test(file.file_path) || file.file_path.split('/').includes('..') || file.file_path.startsWith('/')) {
+        throw failure('Telegram did not return a usable image. Resend the screenshot.', 400);
+      }
+      if (file.file_size > MAX_IMAGE_BYTES) throw failure('The screenshot exceeds 10 MB. Send a smaller JPG, PNG, or WebP image.', 413);
+      let bytes;
+      try {
+        const response = await fetchImpl(`https://api.telegram.org/file/bot${config.token}/${file.file_path}`, {
+          method: 'GET', signal: AbortSignal.timeout(12000), redirect: 'error',
+        });
+        if (!response.ok) {
+          throw Object.assign(failure('Telegram could not download the screenshot. Retry AI or resend the image.', 502), { retryable: response.status === 429 || response.status >= 500 });
+        }
+        if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) {
+          await response.body?.cancel();
+          throw failure('The screenshot exceeds 10 MB. Send a smaller JPG, PNG, or WebP image.', 413);
+        }
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.length;
+          if (size > MAX_IMAGE_BYTES) throw failure('The screenshot exceeds 10 MB. Send a smaller JPG, PNG, or WebP image.', 413);
+          chunks.push(Buffer.from(chunk));
+        }
+        bytes = Buffer.concat(chunks);
+      } catch (error) {
+        if (error.telegramSafe) throw error;
+        throw Object.assign(failure('The Telegram screenshot could not be downloaded. Retry AI; the original reply is preserved.', 502), { retryable: true });
+      }
+      const mimeType = imageMime(bytes);
+      if (!mimeType) throw failure('This attachment is not a supported JPG, PNG, or WebP image. Resend the screenshot.', 415);
+      return `data:${mimeType};base64,${bytes.toString('base64')}`;
+    },
     async sendMessage(input) {
       if (!input || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 4096) throw failure('Enter a message between 1 and 4,096 characters.');
       const config = await required();
+      if (input.expectedBotId != null && String(config.bot.id) !== String(input.expectedBotId)) throw failure('The Telegram bot changed. This receipt belongs to the original bot and was not sent.', 409);
       const id = chatId(input.chatId || config.defaultChatId);
       const message = await call(config.token, 'sendMessage', { chat_id: id, text: input.text });
       return { message: messageView(message, null, 'sent') };

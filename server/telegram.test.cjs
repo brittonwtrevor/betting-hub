@@ -17,7 +17,7 @@ function fixture(options = {}) {
   };
   const fetchImpl = async (url, init) => {
     const method = url.split('/').at(-1);
-    calls.push({ url, method, body: JSON.parse(init.body) });
+    calls.push({ url, method, body: init.body ? JSON.parse(init.body) : undefined });
     if (options.fetch) return options.fetch(method, init);
     const results = {
       getMe: bot, getWebhookInfo: { url: options.webhook || '', pending_update_count: 1 },
@@ -129,6 +129,13 @@ test('sends exactly once using only the requested destination and text', async (
   assert.deepEqual(sent[0].body, { chat_id: '-1001234567890', text: 'test message' });
 });
 
+test('automated receipts cannot send through a replacement bot', async () => {
+  const f = fixture();
+  await f.service.saveConfig({ token });
+  await assert.rejects(f.service.sendMessage({ chatId: '-1001234567890', expectedBotId: '999', text: 'receipt' }), /original bot/);
+  assert.equal(f.calls.filter(call => call.method === 'sendMessage').length, 0);
+});
+
 test('marks send network timeouts as uncertain so card retries cannot duplicate delivery', async () => {
   const f = fixture();
   await f.service.saveConfig({ token });
@@ -152,5 +159,59 @@ test('sanitizes Telegram and network errors so token URLs cannot leak', async ()
     const service = createTelegramService({ env, createPool: () => f.pool, fetchImpl });
     await assert.rejects(service.saveConfig({ token }), error => error.telegramSafe && !error.message.includes(token));
     assert.equal(f.stored, undefined);
+  }
+});
+
+async function mediaFixture({ file = {}, download } = {}) {
+  const f = fixture();
+  await f.service.saveConfig({ token });
+  const calls = [];
+  const service = createTelegramService({ env, createPool: () => f.pool, fetchImpl: async (url, init) => {
+    calls.push({ url, init });
+    if (url.endsWith('/getFile')) return { ok: true, json: async () => ({ ok: true, result: { file_path: 'photos/file_1.jpg', ...file } }) };
+    return download ? download(url, init) : new Response(Buffer.from([255, 216, 255, 0]), { headers: { 'content-type': 'application/octet-stream' } });
+  } });
+  return { service, calls };
+}
+
+test('downloads Telegram images server-side as data URLs and detects MIME type from bytes', async () => {
+  const f = await mediaFixture();
+  const result = await f.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' });
+  assert.equal(result, 'data:image/jpeg;base64,/9j/AA==');
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { file_id: 'saved-photo' });
+  assert.equal(f.calls[1].url, `https://api.telegram.org/file/bot${token}/photos/file_1.jpg`);
+  assert.equal(f.calls[1].init.redirect, 'error');
+  assert.equal(f.calls[1].init.method, 'GET');
+  assert.equal(result.includes(token), false);
+});
+
+test('blocks wrong bots, invalid paths, unsupported image bytes and oversize images', async () => {
+  const f = await mediaFixture();
+  await assert.rejects(f.service.downloadImage({ botId: 999, fileId: 'saved-photo' }), /different Telegram bot/);
+  await assert.rejects(f.service.downloadImage({ botId: bot.id, fileId: 'saved-photo', fileSize: 11 * 1024 * 1024 }), /10 MB/);
+  assert.equal(f.calls.length, 0);
+  for (const file_path of ['../secret.jpg', 'https://other.example/image.jpg', '/photos/a.jpg', 'photos/../a.jpg']) {
+    const bad = await mediaFixture({ file: { file_path } });
+    await assert.rejects(bad.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.telegramSafe && /usable image/.test(error.message));
+    assert.equal(bad.calls.length, 1);
+  }
+  const badBytes = await mediaFixture({ download: () => new Response('<html>not an image</html>') });
+  await assert.rejects(badBytes.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.status === 415);
+  const tooLarge = await mediaFixture({ file: { file_size: 11 * 1024 * 1024 } });
+  await assert.rejects(tooLarge.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.status === 413);
+  assert.equal(tooLarge.calls.length, 1);
+});
+
+test('bounds downloads using both headers and streamed bytes', async () => {
+  const largeHeader = await mediaFixture({ download: () => new Response('small', { headers: { 'content-length': String(11 * 1024 * 1024) } }) });
+  await assert.rejects(largeHeader.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.status === 413);
+  const largeStream = await mediaFixture({ download: () => new Response(Buffer.alloc(11 * 1024 * 1024)) });
+  await assert.rejects(largeStream.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.status === 413);
+});
+
+test('sanitizes download errors and marks transient failures for parsing retries', async () => {
+  for (const download of [() => { throw new Error(`https://api.telegram.org/file/bot${token}/photos/a.jpg`); }, () => new Response('secret provider details', { status: 503 })]) {
+    const f = await mediaFixture({ download });
+    await assert.rejects(f.service.downloadImage({ botId: bot.id, fileId: 'saved-photo' }), error => error.telegramSafe && error.retryable && !error.message.includes(token) && !error.message.includes('secret provider'));
   }
 });

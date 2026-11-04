@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -109,6 +109,36 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       }
     }
 
+    const partnerRoute = /^\/api\/partners(?:\/(import|[a-zA-Z0-9_-]{1,100}))?$/.exec(pathname);
+    if (partnerRoute) {
+      const id = partnerRoute[1];
+      const allowed = id === 'import' ? ['POST'] : id ? ['PATCH'] : ['GET', 'HEAD', 'POST'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        let body;
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          if (request.headers['x-betting-hub'] !== 'partners' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Partner Accounting in Betting Hub to save partners.' });
+          if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Partner requests require JSON.' });
+          let size = 0; const chunks = [];
+          for await (const chunk of request) {
+            size += Buffer.byteLength(chunk);
+            if (size > 98304) return json(413, { message: 'This partner request is too large.' });
+            chunks.push(Buffer.from(chunk));
+          }
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          catch { return json(400, { message: 'Invalid partner JSON.' }); }
+        }
+        if (!partnersService) return json(503, { message: 'Partner storage is not configured yet.' });
+        if (id === 'import') return json(200, await partnersService.importLegacy(body));
+        if (request.method === 'PATCH') return json(200, { partner: await partnersService.update(id, body) });
+        if (request.method === 'POST') return json(200, { partner: await partnersService.add(body) });
+        return json(200, { partners: await partnersService.list() });
+      } catch (error) {
+        if (error.partnerSafe) return json(error.status || 400, { message: error.message });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save partners. Please try again.' });
+      }
+    }
     const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
     if (confirmRoute) {
       const [, sourceId, action, betId] = confirmRoute;
@@ -232,15 +262,16 @@ if (require.main === module) {
     const development = process.argv.includes('--dev');
     const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
     const sendsService = require('./sends.cjs').createSendsService();
+    const partnersService = require('./partners.cjs').createPartnersService();
     const telegramService = require('./telegram.cjs').createTelegramService();
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
-    const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService });
+    const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService });
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService,
+      upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
@@ -252,7 +283,7 @@ if (require.main === module) {
       server.close();
       await confirmsService.close();
       await telegramReceiver.close();
-      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close()]);
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), partnersService.close()]);
     }
     process.once('SIGTERM', () => { void shutdown(); });
     process.once('SIGINT', () => { void shutdown(); });

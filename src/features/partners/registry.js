@@ -1,4 +1,5 @@
 export const storageKey = 'betting-hub.partner-names.v1';
+// Read only for one-time migration. New partner writes go to /api/partners.
 export function readPartners() {
   try {
     const saved = JSON.parse(window.localStorage.getItem(storageKey) || '[]');

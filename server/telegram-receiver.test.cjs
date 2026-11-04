@@ -38,7 +38,10 @@ function fixture(options = {}) {
       Object.assign(saved.states[botId], { next_offset, last_poll_at_ms, last_error: null });
       if (lastUpdate != null) saved.states[botId].last_update_at_ms = lastUpdate;
     } else if (sql.startsWith('UPDATE hub_telegram_poll_state SET last_error')) saved.states[p[1]].last_error = p[0];
-    else if (sql.startsWith('SELECT inbox.')) {
+    else if (sql.startsWith('SELECT kind, raw_update FROM hub_telegram_inbox')) {
+      const row = saved.inbox[`${p[0]}:${p[1]}`];
+      return [[row].filter(item => item && String(item.chat_id) === String(p[2]) && String(item.message_id) === String(p[3]))];
+    } else if (sql.startsWith('SELECT inbox.')) {
       assert.match(sql, /AND EXISTS/);
       assert.match(sql, /JSON_CONTAINS/);
       return [Object.values(saved.inbox).filter(row => row.message_id != null && String(row.bot_id) === p[0] && Object.values(saved.bets).some(bet => {
@@ -63,6 +66,7 @@ function fixture(options = {}) {
   };
   const pool = { async query() { return [[]]; }, execute, async getConnection() { return connection; }, async end() { trace.push('end'); } };
   const telegramService = {
+    async downloadImage(input) { trace.push({ download: input }); return 'data:image/jpeg;base64,/9j/'; },
     async getConfig() { return config; },
     async receiveUpdates(input) {
       trace.push({ receive: input });
@@ -192,6 +196,31 @@ test('preserves captions, channels, media metadata and other update types withou
   assert.equal(JSON.parse(f.saved.inbox['123456789:42'].raw_update).channel_post.photo[0].file_id, 'photo-id');
   assert.deepEqual(JSON.parse(f.saved.inbox['123456789:44'].raw_update), other);
   assert.equal(f.saved.states['123456789'].next_offset, 45);
+});
+
+test('retrieves original photo bytes for legacy confirmation retries using only the exact saved event', async () => {
+  const f = fixture({ updates: [update(42, null, 'channel_post', { caption: 'BOS145', photo: [
+    { file_id: 'thumbnail', width: 90, height: 90 }, { file_id: 'full-size', width: 1000, height: 800, file_size: 5000 },
+  ] })] });
+  await f.receiver.poll();
+  const [message] = (await f.receiver.readInbox()).messages;
+  assert.equal(message.hasMedia, true);
+  assert.deepEqual(await f.receiver.readImages({ ...message, fileId: 'untrusted-override' }), ['data:image/jpeg;base64,/9j/']);
+  assert.deepEqual(f.trace.find(item => item.download).download, { botId: '123456789', fileId: 'full-size', fileSize: 5000 });
+  await assert.rejects(f.receiver.readImages({ ...message, chatId: '-999' }), /original Telegram attachment/);
+  await assert.rejects(f.receiver.readImages({ ...message, botId: '999' }), /original Telegram attachment/);
+  await assert.rejects(f.receiver.readImages({ ...message, updateId: 999 }), /original Telegram attachment/);
+});
+
+test('supports screenshots sent as image documents and leaves unsupported files for review', async () => {
+  const f = fixture({ updates: [update(42, null, 'message', { caption: 'BOS145', document: { file_id: 'png-doc', mime_type: 'image/png', file_size: 123 } })] });
+  await f.receiver.poll();
+  assert.equal((await f.receiver.readImages((await f.receiver.readInbox()).messages[0])).length, 1);
+  assert.equal(f.trace.find(item => item.download).download.fileId, 'png-doc');
+  f.setUpdates([update(43, null, 'edited_message', { caption: 'BOS145', document: { file_id: 'pdf-doc', mime_type: 'application/pdf' } })]);
+  await f.receiver.poll();
+  assert.deepEqual(await f.receiver.readImages((await f.receiver.readInbox()).messages[0]), []);
+  assert.equal(f.trace.filter(item => item.download).length, 1);
 });
 
 test('saved inbox reads durable messages and polling status without making a Telegram receive request', async () => {

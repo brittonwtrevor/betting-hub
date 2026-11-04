@@ -7,6 +7,10 @@ const message = { botId: '1', chatId: '-5550868176', chat: 'trevor_partner', tex
 const extracted = { bets: [{ betId: 'HAN187', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110 }], issues: [] };
 const response = result => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 500, completion_tokens: 100 } }) });
 
+test('bot receipt messages cannot become new AI bets', () => {
+  assert.deepEqual(eligibleContexts({ ...message, senderId: message.botId, text: 'BET LOGGED\nBet ID: HAN187' }), []);
+});
+
 test('uses the inexpensive DigitalOcean model and sends only reply plus compact context, never bot credentials or partner metadata', async () => {
   const calls = [];
   const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async (url, input) => { calls.push({ url, input }); return response(extracted); } });
@@ -35,6 +39,62 @@ test('supports multiple fills and leaves ambiguous values blank for review', () 
     assert.throws(() => validateExtraction({ bets: [{ ...extracted.bets[0], ...patch }], issues: [] }, message), error => error.confirmSafe);
   }
   assert.equal(validateExtraction({ ...extracted, bets: [{ ...extracted.bets[0], grade: 'WIN', pl: 100000 }] }, message).bets[0].pl, null);
+});
+
+test('sends an image with a bet-ID-only caption as multimodal input, including prediction-market guidance', async () => {
+  const image = 'data:image/png;base64,iVBORw0KGgo=';
+  const photoMessage = { ...message, text: 'HAN187', hasMedia: true };
+  const calls = [];
+  let readMessage;
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' },
+    readImages: async input => { readMessage = input; return [image]; },
+    fetchImpl: async (url, input) => { calls.push(JSON.parse(input.body)); return response({
+      bets: [{ ...extracted.bets[0], risk: 0.99, odds: -1238 }], issues: ['Effective odds include $0.01 fees.'],
+    }); },
+  });
+  const result = await parser.parse(photoMessage);
+  assert.equal(readMessage, photoMessage);
+  assert.equal(result.bets[0].risk, 0.99);
+  assert.equal(result.bets[0].odds, -1238);
+  assert.equal(result.bets[0].grade, 'UNGRADED');
+  assert.equal(result.bets[0].pl, null);
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.model, 'mistral-3-14B');
+  const content = calls[0].messages.at(-1).content;
+  assert.equal(JSON.parse(content[0].text).reply, 'HAN187');
+  assert.deepEqual(content[1], { type: 'image_url', image_url: { url: image } });
+  assert.match(calls[0].messages[1].content, /Cost plus separately charged Fees/);
+  assert.doesNotMatch(JSON.stringify(calls[0]), /api.telegram.org|test-secret|5550868176/);
+});
+
+test('supports image-only replies with linked send context and an optional vision model override', async () => {
+  const bodies = [];
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret', DO_INFERENCE_MODEL: 'custom-text', DO_INFERENCE_VISION_MODEL: 'custom-vision' },
+    readImages: async () => ['data:image/jpeg;base64,/9j/'],
+    fetchImpl: async (url, input) => { bodies.push(JSON.parse(input.body)); return response(extracted); },
+  });
+  assert.equal((await parser.parse({ ...message, text: '', hasMedia: true })).model, 'custom-vision');
+  assert.equal((await parser.parse(message)).model, 'custom-text');
+  assert.ok(Array.isArray(bodies[0].messages.at(-1).content));
+  assert.equal(typeof bodies[1].messages.at(-1).content, 'string');
+});
+
+test('does not silently parse just the caption if an attachment cannot be read; retries sanitized download failures', async () => {
+  let calls = 0;
+  const photoMessage = { ...message, text: 'HAN187', hasMedia: true };
+  const parser = options => createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => { calls++; }, ...options });
+  assert.match((await parser({ readImages: async () => [] }).parse(photoMessage)).issues[0], /attachment cannot be read/);
+  await assert.rejects(parser({}).parse(photoMessage), /image retrieval/);
+  await assert.rejects(parser({ readImages: async () => { throw new Error('secret-token-url'); } }).parse(photoMessage), error => error.confirmSafe && error.retryable && !error.message.includes('secret-token'));
+  await assert.rejects(parser({ readImages: async () => { throw Object.assign(new Error('The screenshot exceeds 10 MB.'), { telegramSafe: true, status: 413 }); } }).parse(photoMessage), error => error.confirmSafe && !error.retryable && /10 MB/.test(error.message));
+  assert.equal(calls, 0);
+});
+
+test('explains image incompatibility when the inference provider rejects multimodal input', async () => {
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, readImages: async () => ['data:image/png;base64,iVBORw0KGgo='],
+    fetchImpl: async () => ({ ok: false, status: 400, json: async () => ({ error: 'secret provider body' }) }),
+  });
+  await assert.rejects(parser.parse({ ...message, hasMedia: true }), error => error.confirmSafe && !error.retryable && /DO_INFERENCE_VISION_MODEL/.test(error.message) && !error.message.includes('secret provider'));
 });
 
 test('resolves partner context by numeric IDs, usernames, and delivered chat IDs without trusting display titles', () => {

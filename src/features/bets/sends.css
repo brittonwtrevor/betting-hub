@@ -50,13 +50,12 @@
 .confirmation-raw { padding: 0 16px 12px; font-size: 11px; color: var(--muted); }
 .confirmation-raw summary { cursor: pointer; }
 .confirmation-raw p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; margin-top: 10px; }
-.confirmation-fields { min-width: 1980px; }
-.confirmation-fields input, .confirmation-fields select { width: 100%; min-width: 75px; border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: inherit; background: var(--paper); color: inherit; }
-.confirmation-fields .confirmation-game { min-width: 210px; }
-.confirmation-fields td:nth-child(2), .confirmation-fields td:nth-child(3), .confirmation-fields td:nth-child(4), .confirmation-fields td:nth-child(6), .confirmation-fields td:nth-child(7) { min-width: 170px; }
-.confirmation-actions { min-width: 220px; }
-.confirmation-actions .button { margin: 0 5px 5px 0; }
-.confirmation-fields small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.data-table.confirmation-fields { min-width: 0; table-layout: fixed; font-size: 11px; }
+.confirmation-fields th, .confirmation-fields td { padding: 8px 6px; white-space: normal; overflow-wrap: anywhere; }
+.confirmation-fields td { vertical-align: top; }
+.confirmation-fields input, .confirmation-fields select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 6px 4px; font: inherit; background: var(--paper); color: inherit; }
+.confirmation-fields .confirmation-actions .button { width: 100%; min-height: 28px; padding: 5px 3px; margin-bottom: 4px; white-space: normal; }
+.confirmation-fields small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 .confirm-profit { color: #24754c; }
 .confirm-loss { color: #a52d38; }
 @media (max-width: 760px) { .send-card-header, .send-card-details, .send-card-footer { padding-left: 14px; padding-right: 14px; } .sends-notice { font-size: 10px; gap: 9px; } }

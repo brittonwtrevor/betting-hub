@@ -19,6 +19,8 @@ beforeEach(() => {
   window.localStorage.setItem('betting-hub.partner-names.v1', JSON.stringify([{ id: 'sam', name: 'Sam', telegramChannel: '-100123' }]));
   saved = []; failSave = false;
   global.fetch = jest.fn(async (url, options = {}) => {
+    if (url === '/api/partners/import') return response({ imported: true });
+    if (url === '/api/partners') return response({ partners: [{ id: 'sam', name: 'Sam', telegramChannel: '-100123', revision: 1 }] });
     if (url === '/api/lol/upcoming-games') return response({ games: [game], columns, source: { updatedAt: '2026-11-04 12:00:00' } });
     const body = options.body && JSON.parse(options.body);
     if (url.endsWith('/send')) {
