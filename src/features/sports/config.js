@@ -10,12 +10,10 @@ export const sportDashboards = {
     inputs: ['Game and player logs', 'Rosters and availability', 'Goalie information', 'Model predictions'],
   },
   lol: {
-    label: 'League of Legends', icon: 'game', description: 'Match research, player performance, and draft context.',
-    metrics: ['Upcoming matches', 'Model coverage', 'Confirmed lineups', 'Player-data freshness'],
+    label: 'League of Legends', icon: 'game', description: 'Upcoming games, model prices, and projected lineups.',
+    metrics: ['Upcoming games', 'Leagues', 'Lineup options', 'Model coverage'],
     views: [
-      { id: 'matches', label: 'Matches', columns: ['Matchup', 'Competition', 'Start time', 'Model probability', 'Market odds'], description: 'Upcoming matches, team projections, and market comparisons.' },
-      { id: 'players', label: 'Players & Teams', columns: ['Player / Team', 'Competition', 'Games', 'KOE', 'AOE', 'DOE'], description: 'Player and team performance, including KOE, AOE, and DOE.' },
-      { id: 'draft', label: 'Draft Analysis', columns: ['Matchup', 'Team composition', 'Opponent composition', 'Game state', 'Projection'], description: 'Composition matchups and projections by game state.' },
+      { id: 'upcoming', label: 'Upcoming Games', columns: ['Start time (ET)', 'League', 'Team A', 'Team B', 'XGB Map1', 'Total'], description: 'Upcoming games, model prices, and projected lineups.' },
     ],
     inputs: ['Match and event data', 'Player statistics', 'Lineup information', 'Model predictions'],
   },

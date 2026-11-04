@@ -11,7 +11,28 @@ A React workspace for betting operations, research, and reporting, hosted on Dig
 - **Partner Accounting:** balances, reported bets, and payments.
 - **Analytics:** performance, date/sport/scope filters, breakdowns, and export placeholders.
 
-This initial version provides navigation and UI structure. Sources are marked as unconnected, data tables are empty, and external integrations have not been added.
+The League of Legends dashboard reads published model outputs directly from DigitalOcean MySQL. Other workspaces currently provide navigation and UI structure with unconnected sources and empty data tables.
+
+## League of Legends: Upcoming Games
+
+Open **Sports Dashboards → League of Legends** (`#/sports/lol`). This reproduces only the Shiny app's Upcoming Games tab, using `defaultdb.TREVORFAIRS` instead of local CSV files. The existing LoL model publisher already writes this table; the hub only reads it.
+
+The view includes all 34 Shiny columns, Team A's Map 1/BO3/BO5 prices and probabilities, totals, duration, both player lineups, league and column filters, search, sorting, and pagination (200 rows by default). The last confirmed lineup filter defaults on, matching Shiny. Selecting a row copies `match_id`, league, the original UTC start time, Team A, and Team B as a tab-separated line for Google Sheets. The visible table shows Eastern Time. Series calculations retain Shiny's assumption of the same independent map win probability throughout the series.
+
+Add these **Runtime** environment variables to the DigitalOcean web service, alongside the app authentication variables below. Keep database values server-side; do not use a `REACT_APP_` prefix.
+
+| Key | Value |
+| --- | --- |
+| `LOL_DO_DB_HOST` | Managed MySQL cluster hostname |
+| `LOL_DO_DB_PORT` | `25060` |
+| `LOL_DO_DB_USER` | Database username |
+| `LOL_DO_DB_PASSWORD` | Database password; select **Encrypt** |
+| `LOL_DO_DB_NAME` | `defaultdb` |
+| `LOL_DO_DB_SSL_CA` | Cluster CA certificate PEM, downloaded from the database's Connection Details |
+
+The connection requires TLS with certificate verification. Set `LOL_DO_DB_SSL_CA` for this cluster's private CA; either a multiline PEM or a PEM with literal `\n` separators works. Make sure the web service is an allowed trusted source for the database. Credentials and connection errors are never included in the browser bundle or API response.
+
+`GET /api/lol/upcoming-games` uses the same password gate as the app. It performs a fixed `SELECT` from `TREVORFAIRS`, with no database writes. Fetching the dashboard or clicking **Refresh data** rereads the table; it does not run the model. The source publication timestamp and fetch time are displayed separately. As in Shiny, rows are not removed based on today's date, so an old model publication remains visible with its original timestamp. When a refresh fails, old results are cleared and an error is shown.
 
 ## Production password protection
 
@@ -39,6 +60,8 @@ yarn install --frozen-lockfile
 yarn dev
 ```
 
+For the LoL data view, also run `yarn dev:api` in another terminal with the authentication and database environment variables set. The React development server proxies `/api` requests to port 8080. The API continues to require the app credentials; the development API accepts local HTTP. Production continues to require HTTPS.
+
 ## Validation
 
 ```sh
@@ -47,6 +70,6 @@ yarn test:server
 yarn build
 ```
 
-The production build is written to `_static/`. The build command is unchanged; the production start command now serves that directory through the authenticated Node server. The server and its tests use Node's built-in modules, with no additional packages.
+The production build is written to `_static/`. The build command is unchanged; the production start command serves that directory and the data API through the authenticated Node server. MySQL access uses `mysql2`; server tests use Node's built-in test runner.
 
 See [the structure guide](docs/structure.md) for routes, source organization, and future integration boundaries.

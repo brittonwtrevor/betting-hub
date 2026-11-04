@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -78,6 +78,21 @@ function createHandler({ username, password, directory, requireHttps = true }) {
       return reply(response, 404, 'Not found.\n', {}, head);
     }
 
+    if (pathname === '/api/lol/upcoming-games') {
+      try {
+        if (!upcomingGamesService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
+        const data = await upcomingGamesService.getUpcomingGames();
+        return reply(response, 200, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      } catch (error) {
+        const unconfigured = error.code === 'DB_NOT_CONFIGURED';
+        return reply(response, unconfigured ? 503 : 502, JSON.stringify({
+          code: unconfigured ? 'DB_NOT_CONFIGURED' : 'DB_UNAVAILABLE',
+          message: unconfigured ? 'League of Legends data connection is not configured yet.' : 'Unable to load League of Legends data. Try refreshing shortly.',
+        }), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      }
+    }
+    if (pathname.startsWith('/api/')) return reply(response, 404, 'Not found.\n', {}, head);
+
     let file = path.resolve(root, `.${pathname}`);
     if (file !== root && !file.startsWith(`${root}${path.sep}`)) {
       return reply(response, 404, 'Not found.\n', {}, head);
@@ -112,14 +127,17 @@ function createHandler({ username, password, directory, requireHttps = true }) {
 
 if (require.main === module) {
   try {
+    const development = process.argv.includes('--dev');
+    const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
-      directory: path.join(__dirname, '..', '_static'),
-      requireHttps: process.env.APP_ALLOW_HTTP !== 'true',
+      directory: path.join(__dirname, '..', development ? 'public' : '_static'),
+      requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
+      upcomingGamesService,
     });
     const port = Number(process.env.PORT || 8080);
-    http.createServer(handler).listen(port, '0.0.0.0', () => {
+    http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
       console.log(`Betting Hub listening on port ${port}; authentication required.`);
     });
   } catch (error) {

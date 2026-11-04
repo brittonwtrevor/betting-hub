@@ -1,6 +1,6 @@
 # Betting Hub structure
 
-This version provides the interface and navigation for six workspaces. It makes no external API requests and stores no bets or account information.
+This version provides the interface and navigation for six workspaces. League of Legends Upcoming Games reads published outputs from DigitalOcean MySQL; the remaining integrations are placeholders. It stores no bets or account information.
 
 | Workspace | URL |
 | --- | --- |
@@ -24,8 +24,10 @@ Hash-based navigation works with the password-protected production server, inclu
 - `src/features/sports/config.js`: the views, table columns, and input coverage for each sport.
 - `src/App.css` and `src/index.css`: shared responsive layout and visual styles, without external CSS dependencies.
 - `server/index.cjs`: production static serving with server-side HTTP Basic authentication. Credentials come from runtime environment variables; `/healthz` exposes no app content.
+- `server/lol.cjs`: read-only `TREVORFAIRS` adapter, Shiny-equivalent formatting/series calculations, and verified MySQL TLS configuration.
+- `src/features/sports/lol/`: Upcoming Games table, filters, row selection/TSV copy, pagination, and Eastern Time display.
 
-Navigation, category filters, search over planned sources, source details, workspace view switches, sports sub-tabs, and the alerts inbox work locally. Data-dependent metrics show dashes and data-dependent actions, such as export, remain disabled with an explanation. Financial tables contain empty states.
+Navigation, category filters, search over planned sources, source details, workspace view switches, sports sub-tabs, and the alerts inbox work locally. League of Legends metrics and Upcoming Games use the authenticated `/api/lol/upcoming-games` endpoint. Other data-dependent metrics show dashes and actions, such as export, remain disabled with an explanation. Financial tables contain empty states.
 
 ## Development and checks
 
@@ -44,10 +46,10 @@ yarn build
 
 The production build is written to `_static/`. The `start` command runs the authenticated Node server; configure `APP_AUTH_USERNAME` and `APP_AUTH_PASSWORD` as runtime variables before deployment. The `dev` command runs the local React development server without the production authentication gate. See the README for deployment setup.
 
-The application tests cover the default monitoring state, navigation/deep links, sports routes, source filtering, and opening/closing drawers.
+The application tests cover the default monitoring state, navigation/deep links, sports routes, source filtering, drawers, LoL filtering/sorting/pagination, TSV copying, error recovery, and timezones. Server tests cover authentication, API access/error handling, prediction calculations, and the fixed read-only query.
 
 ## Adding integrations later
 
-Add source adapters and the authenticated backend when integrating actual data. Keep source timestamps, successful model completion, output publication, and hub ingestion as separate fields. The planned source inventory should then be backed by real health records.
+Extend the existing authenticated backend with source adapters when integrating more data. Keep source timestamps, successful model completion, output publication, and hub ingestion as separate fields. The planned Monitoring source inventory still needs real health records; a successful LoL fetch does not establish the health of other integrations.
 
 Suggestions, placements, partner reports, settlements, and payments should retain their own identities and link to each other. Confirmed placements determine exposure; sending a recommendation alone does not establish a placed bet.

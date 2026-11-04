@@ -6,7 +6,9 @@ import App from './App';
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.scrollTo = jest.fn();
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {} }) });
 });
+afterEach(() => { delete global.fetch; });
 
 function navigate(path) {
   act(() => {
@@ -25,10 +27,11 @@ test('opens Monitoring with planned connections and no invented health results',
   expect(screen.getByText('No freshness checks have run', { exact: false })).toBeInTheDocument();
 });
 
-test('supports every workspace and sports deep links, including hash navigation', () => {
+test('supports every workspace and sports deep links, including hash navigation', async () => {
   window.history.replaceState(null, '', '/#/sports/lol');
   render(<App />);
   expect(screen.getByRole('heading', { level: 2, name: 'League of Legends' })).toBeInTheDocument();
+  await screen.findByText('Database connected');
   const destinations = [
     ['/bets', 'Active Bets'], ['/suggestions', 'Bet Suggestions'],
     ['/partners', 'Partner Accounting'], ['/analytics', 'Analytics'], ['/', 'Monitoring'],

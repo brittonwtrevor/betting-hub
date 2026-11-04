@@ -23,12 +23,12 @@ before(async () => {
 });
 after(async () => { if (temp) await fs.rm(temp, { recursive: true, force: true }); });
 
-async function request(url, { authorization, https = true, method = 'GET' } = {}) {
+async function request(url, { authorization, https = true, method = 'GET', useHandler = handler } = {}) {
   const request = { url, method, socket: {}, headers: {} };
   if (authorization) request.headers.authorization = authorization;
   if (https) request.headers['x-forwarded-proto'] = 'https';
   const result = { status: null, headers: {}, body: '' };
-  await handler(request, {
+  await useHandler(request, {
     writeHead(status, headers) { result.status = status; result.headers = headers; },
     end(body) { result.body = body?.toString() || ''; },
   });
@@ -95,4 +95,34 @@ test('health endpoint exposes only a content-free liveness response', async () =
   assert.equal(result.status, 200);
   assert.equal(result.body, 'ok\n');
   assert.equal((await request('/healthz/', { https: false })).status, 426);
+});
+
+test('protects the database API before querying and returns uncached JSON only after sign-in', async () => {
+  let reads = 0;
+  const data = { games: [{ match_id: 1 }], columns: [], source: { name: 'DigitalOcean MySQL' } };
+  const useHandler = createHandler({ ...credentials, directory, upcomingGamesService: {
+    async getUpcomingGames() { reads++; return data; },
+  } });
+  assert.equal((await request('/api/lol/upcoming-games', { useHandler })).status, 401);
+  assert.equal((await request('/api/lol/upcoming-games', { useHandler, authorization: auth, method: 'POST' })).status, 405);
+  assert.equal(reads, 0);
+  const result = await request('/api/lol/upcoming-games', { useHandler, authorization: auth });
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['Cache-Control'], 'private, no-store');
+  assert.match(result.headers['Content-Type'], /application\/json/);
+  assert.deepEqual(JSON.parse(result.body), data);
+  assert.equal((await request('/api/lol/upcoming-games', { useHandler, authorization: auth, method: 'HEAD' })).body, '');
+  assert.equal((await request('/api/unknown', { useHandler, authorization: auth })).status, 404);
+});
+
+test('database errors have actionable statuses and never reveal connection details', async () => {
+  const missing = await request('/api/lol/upcoming-games', { authorization: auth });
+  assert.equal(missing.status, 503);
+  assert.equal(JSON.parse(missing.body).code, 'DB_NOT_CONFIGURED');
+  const useHandler = createHandler({ ...credentials, directory, upcomingGamesService: {
+    async getUpcomingGames() { throw new Error('private-host password=secret SELECT *'); },
+  } });
+  const failed = await request('/api/lol/upcoming-games', { useHandler, authorization: auth });
+  assert.equal(failed.status, 502);
+  assert.doesNotMatch(failed.body, /private-host|secret|SELECT/);
 });
