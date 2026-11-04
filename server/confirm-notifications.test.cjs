@@ -36,14 +36,21 @@ function fixture() {
 }
 
 test('receipts contain complete log details and net results for every grade', () => {
-  assert.match(notificationText('logged', bet), /BET LOGGED\nBet ID: HAN187/);
-  assert.match(notificationText('logged', bet), /Risk: \$500.00\nOdds: -110/);
-  assert.match(notificationText('logged', bet), /Partner: Trevor\nBettor: Luke/);
-  assert.match(notificationText('grade', bet), /Grade: WIN\nNet P\/L: \+\$454.55/);
+  assert.equal(notificationText('logged', { ...bet, partnerName: 'trevor_partner', risk: 100 }),
+    "trevor_partner's HAN187 bet on Hanwha Life Esports Moneyline (Hanwha Life Esports vs Bilibili Gaming, 2026-11-04 ET), risking $100.00 at -110, was logged.");
+  assert.doesNotMatch(notificationText('logged', bet), /\n|Bettor|Luke/);
+  assert.match(notificationText('grade', bet), /was graded WIN with net P\/L of \+\$454.55\./);
+  assert.doesNotMatch(notificationText('grade', bet), /\n|Bettor|Luke/);
   for (const [grade, pl, text] of [['LOSS', -500, '-$500.00'], ['VOID', 0, '$0.00'], ['PARTRETURN', -25, '-$25.00']]) {
-    assert.ok(notificationText('grade', { ...bet, grade, pl }).includes(`Grade: ${grade}\nNet P/L: ${text}`));
+    assert.ok(notificationText('grade', { ...bet, grade, pl }).includes(`was graded ${grade} with net P/L of ${text}.`));
   }
+  assert.match(notificationText('grade', { ...bet, grade: 'UNGRADED', pl: null }), /is now ungraded with net P\/L pending\./);
+  assert.equal(notificationText('grade', { ...bet, betId: 'GEN336', game: 'Gen.G vs LYON', team: 'Gen.G', bet: 'Map 1', risk: 250, odds: 100, partnerName: 'trevor_partner', grade: 'VOID', pl: 0 }),
+    "trevor_partner's GEN336 bet on Gen.G Map 1 (Gen.G vs LYON, 2026-11-04 ET), risking $250.00 at +100, was graded VOID with net P/L of $0.00.");
   assert.match(notificationText('logged', { ...bet, complete: false, risk: null, odds: null }), /Not provided/);
+  assert.match(notificationText('logged', { ...bet, complete: false }), /some details need review in Confirms/);
+  assert.match(notificationText('delete', bet), /Trevor's HAN187 bet on .*was deleted from the bet log\./);
+  assert.doesNotMatch(notificationText('delete', bet), /\n|Bettor|Luke|graded/);
 });
 
 test('one receipt per saved revision sends to the original bot/chat and survives restart without resending', async () => {
@@ -56,8 +63,8 @@ test('one receipt per saved revision sends to the original bot/chat and survives
   assert.equal(f.sent.length, 2);
   assert.equal(f.sent[0].chatId, '-5550868176');
   assert.equal(f.sent[0].expectedBotId, '1');
-  assert.match(f.sent[0].text, /BET LOGGED/);
-  assert.match(f.sent[1].text, /BET GRADED/);
+  assert.match(f.sent[0].text, /was logged\./);
+  assert.match(f.sent[1].text, /was graded WIN/);
   assert.ok(Object.values(f.jobs).every(job => job.status === 'sent'));
 });
 
@@ -95,6 +102,29 @@ test('deleted bets and competing workers do not send receipts', async () => {
   assert.equal(f.sent.length, 0);
 });
 
+test('a deleted bet sends its deletion notice once while obsolete log/grade receipts are cancelled', async () => {
+  const f = fixture();
+  await f.notifications.enqueue(f.db, 'source', 'bet-1', 1, 'logged', bet);
+  await f.notifications.enqueue(f.db, 'source', 'bet-1', 2, 'grade', bet);
+  await f.notifications.enqueue(f.db, 'source', 'bet-1', 3, 'delete', bet);
+  f.deleteBet();
+  await f.notifications.flush(f.pool);
+  await f.make().flush(f.pool);
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].chatId, '-5550868176');
+  assert.match(f.sent[0].text, /was deleted from the bet log\./);
+  assert.deepEqual(Object.values(f.jobs).map(job => job.status), ['cancelled', 'cancelled', 'sent']);
+});
+
+test('cancelled receipts cannot be reclaimed from an earlier worker snapshot', async () => {
+  const f = fixture();
+  await f.notifications.enqueue(f.db, 'source', 'bet-1', 1, 'logged', bet);
+  const execute = f.db.execute.bind(f.db);
+  f.db.execute = async (sql, params) => sql.includes("status = 'sending'") ? [{ affectedRows: 0 }] : execute(sql, params);
+  await f.notifications.flush(f.pool);
+  assert.equal(f.sent.length, 0);
+});
+
 test('retries stop after three confirmed failures and do not permanently block a later grade receipt', async () => {
   const f = fixture();
   await f.notifications.enqueue(f.db, 'source', 'bet-1', 1, 'logged', bet);
@@ -105,5 +135,5 @@ test('retries stop after three confirmed failures and do not permanently block a
   await f.notifications.enqueue(f.db, 'source', 'bet-1', 2, 'grade', bet);
   f.fail(null); await f.notifications.flush(f.pool);
   assert.equal(f.sent.length, 4);
-  assert.match(f.sent[3].text, /BET GRADED/);
+  assert.match(f.sent[3].text, /was graded WIN/);
 });

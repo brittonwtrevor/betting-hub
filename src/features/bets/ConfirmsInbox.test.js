@@ -25,7 +25,7 @@ beforeEach(() => {
     }
     if (options.method === 'DELETE') {
       stored.sources[0].bets = []; stored.sources[0].deletedBetCount = 1;
-      return response({ bet: { id: base.id, deletedAt: new Date().toISOString() } });
+      return response({ bet: { id: base.id, deletedAt: new Date().toISOString(), notification: { id: 'delete-receipt', kind: 'delete', status: 'pending' } } });
     }
     if (url.endsWith('/manual')) {
       const bet = { ...base, id: 'bet-2', risk: null, odds: null, complete: false };
@@ -62,6 +62,7 @@ test('deletion can be cancelled, removes only the selected bet, and polling does
   await act(async () => {});
   expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument();
   expect(screen.getByText(/1 deleted bet/)).toBeInTheDocument();
+  expect(screen.getByText('Telegram deletion for HAN187: Queued')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Retry AI' })).not.toBeInTheDocument();
   expect(fetch).toHaveBeenCalledWith('/api/confirms/bets/bet-1', expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ revision: 1 }) }));
   // An older in-flight refresh must not resurrect a row just deleted locally.

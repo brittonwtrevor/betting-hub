@@ -36,7 +36,7 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
     catch (failure) { setError(failure.message); setBusy(false); }
   }
   return <>
-    <tr className="confirmation-row">
+    <tr className="confirmation-row" data-grade={edited.grade}>
       <td><span aria-label={`Bet ID for ${bet.id}`}>{edited.betId || '—'}</span></td>
       <td title={bet.partnerId ? `Partner ID: ${bet.partnerId}` : undefined}>{bet.partnerName || '—'}<small>{bet.telegramChatName}</small></td>
       <td><span aria-label={`Bet date (ET) for ${bet.id}`}>{edited.betDate || '—'}</span><small>Reply: {eastern(bet.betAt)} ET</small></td>
@@ -80,6 +80,7 @@ export default function ConfirmsInbox() {
             const previous = current?.sources.find(item => item.id === source.id);
             if (previous?.revision > source.revision) return previous;
             return { ...source, deletedBetCount: Math.max(source.deletedBetCount || 0, previous?.deletedBetCount || 0),
+              deletionNotifications: Object.values([...(previous?.deletionNotifications || []), ...(source.deletionNotifications || [])].reduce((all, receipt) => ({ ...all, [receipt.id]: receipt }), {})),
               bets: source.bets.filter(bet => !deletedRows.current.has(bet.id)).map(bet => {
               const old = previous?.bets.find(item => item.id === bet.id);
               return old?.revision > bet.revision ? old : bet;
@@ -100,10 +101,11 @@ export default function ConfirmsInbox() {
     return bet;
   }
   async function deleteBet(bet) {
-    await api(`/bets/${encodeURIComponent(bet.id)}`, 'DELETE', { revision: bet.revision });
+    const { bet: removed } = await api(`/bets/${encodeURIComponent(bet.id)}`, 'DELETE', { revision: bet.revision });
     deletedRows.current.add(bet.id);
     setInbox(current => ({ ...current, sources: current.sources.map(source => source.id === bet.sourceId ? {
       ...source, deletedBetCount: (source.deletedBetCount || 0) + 1, bets: source.bets.filter(item => item.id !== bet.id),
+      deletionNotifications: [...(source.deletionNotifications || []), ...(removed?.notification ? [{ ...removed.notification, betId: bet.betId }] : [])],
     } : source) }));
   }
   async function sourceAction(source, action) {
@@ -133,6 +135,7 @@ export default function ConfirmsInbox() {
       <details className="confirmation-raw"><summary>Raw reply · {(source.message.betIds || []).join(', ')}</summary><p>{source.message.text || '[Message without text]'}</p></details>
       {source.error && <p className="sends-error" role="alert">{source.error}</p>}{source.issues?.map((issue, index) => <p className="confirms-note" key={index}>{issue}</p>)}
       {source.deletedBetCount > 0 && <p className="confirms-note">{source.deletedBetCount} deleted bet{source.deletedBetCount === 1 ? '' : 's'}. Raw reply and history preserved.</p>}
+      {(source.deletionNotifications || []).map(receipt => <p key={receipt.id} className="confirms-note">Telegram deletion for {receipt.betId}: {receiptStatuses[receipt.status] || receipt.status}{receipt.error ? ` · ${receipt.error}` : ''}</p>)}
       {source.bets.length > 0 && <div className="table-scroll"><table className="data-table confirmation-fields" aria-label={`Bets for reply ${source.message.messageId}`}><colgroup>{[6, 9, 8, 14, 10, 10, 6, 6, 10, 7, 6, 8].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup><thead><tr>{['BETID', 'PARTNER', 'BET DATE (ET)', 'GAME', 'TEAM', 'BET', 'RISK ($)', 'ODDS', 'GRADE', 'PARTRETURN P/L ($)', 'P/L', 'Actions'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{source.bets.map(bet => <ConfirmationRow key={bet.id} bet={bet} onSave={saveBet} onDelete={deleteBet} />)}</tbody></table></div>}
     </article>)}
     {!loading && !sources.length && !error && <EmptyState compact title={search ? 'No matching replies' : 'No bet replies received yet'} description={search ? 'Try another bet ID, partner, or message.' : 'Partner messages containing a recognized six-character Bet ID will appear here.'} />}

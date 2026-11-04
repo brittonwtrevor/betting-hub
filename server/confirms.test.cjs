@@ -42,6 +42,8 @@ function fixture(options = {}) {
     } else if (sql.startsWith('INSERT INTO hub_confirm_notifications')) {
       const [id, bet_row_id, bet_revision, source_id, bot_id, chat_id, kind, payload, created_at, updated_at] = p;
       data.receipts[id] ||= { id, bet_row_id, bet_revision, source_id, bot_id, chat_id, kind, payload, created_at, updated_at, status: 'pending' };
+    } else if (sql.startsWith("UPDATE hub_confirm_notifications SET status = 'cancelled'")) {
+      for (const receipt of Object.values(data.receipts)) if (receipt.bet_row_id === p[1] && ['pending', 'error'].includes(receipt.status)) receipt.status = 'cancelled';
     } else if (sql.startsWith('SELECT id, bet_row_id')) return [Object.values(data.receipts).filter(row => p.includes(row.source_id)).map(copy)];
     else if (sql.startsWith('INSERT INTO hub_confirm_history')) data.audit.push(copy(p));
     else if (sql.startsWith('UPDATE hub_confirm_bets')) {
@@ -107,7 +109,7 @@ test('imports, parses, and persists multiple bets once across repeated reads and
   assert.equal(Object.keys(f.data.receipts).length, 2);
   const receipt = Object.values(f.data.receipts)[0];
   assert.equal(receipt.chat_id, '-5550868176');
-  assert.match(JSON.parse(receipt.payload).text, /BET LOGGED/);
+  assert.match(JSON.parse(receipt.payload).text, /was logged\./);
   await f.service.tick();
   await f.makeService().tick();
   assert.equal(f.parseCalls, 1);
@@ -157,9 +159,28 @@ test('deleting updates the current row and audit, survives restart and Telegram 
   const after = (await f.service.list()).sources[0];
   assert.equal(after.bets.length, 0);
   assert.equal(after.deletedBetCount, 1);
+  assert.equal(after.deletionNotifications.length, 1);
+  assert.equal(after.deletionNotifications[0].status, 'pending');
+  const deletionReceipt = Object.values(f.data.receipts).find(row => row.kind === 'delete');
+  assert.equal(deletionReceipt.chat_id, '-5550868176');
+  assert.match(JSON.parse(deletionReceipt.payload).text, /was deleted from the bet log\./);
+  assert.ok(Object.values(f.data.receipts).filter(row => row.kind !== 'delete').every(row => row.status === 'cancelled'));
+  await assert.rejects(f.service.remove(graded.id, { revision: graded.revision + 1 }), /already deleted/);
+  assert.equal(Object.values(f.data.receipts).filter(row => row.kind === 'delete').length, 1);
   assert.equal(f.parseCalls, 1);
   await assert.rejects(f.service.retry(after.id, { revision: after.revision }), /will not replace/);
   await assert.rejects(f.service.update(graded.id, { ...graded, revision: graded.revision + 1 }), /deleted/);
+});
+
+test('a deletion receipt queue failure rolls back both deletion and cancellation of prior receipts', async () => {
+  const f = fixture(); await f.service.tick();
+  const bet = (await f.service.list()).sources[0].bets[0];
+  f.setFailure(sql => sql.startsWith('INSERT INTO hub_confirm_notifications'));
+  await assert.rejects(f.service.remove(bet.id, bet));
+  f.setFailure(null);
+  assert.equal((await f.service.list()).sources[0].bets.length, 1);
+  assert.equal(Object.values(f.data.receipts)[0].status, 'pending');
+  assert.equal(JSON.parse(f.data.bets[bet.id].payload).deletedAt, null);
 });
 
 test('editing all six fields and grading persists computed P/L with before/after history and rejects stale revisions', async () => {
@@ -170,7 +191,7 @@ test('editing all six fields and grading persists computed P/L with before/after
   assert.equal(edited.pl, 750);
   assert.equal(edited.revision, 2);
   const gradeReceipt = Object.values(f.data.receipts).find(row => row.kind === 'grade');
-  assert.match(JSON.parse(gradeReceipt.payload).text, /Grade: WIN\nNet P\/L: \+\$750.00/);
+  assert.match(JSON.parse(gradeReceipt.payload).text, /was graded WIN with net P\/L of \+\$750.00\./);
   assert.equal((await f.makeService().list()).sources[0].bets[0].game, 'Other game');
   assert.equal(f.data.audit.at(-1)[2], 'grade');
   assert.equal(f.data.audit.at(-1)[3], 'trevor');

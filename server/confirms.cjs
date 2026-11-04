@@ -183,6 +183,9 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, bet_revision, id`, ids) : [[]];
       return { sources: sources.map(row => ({ id: row.id, revision: row.revision, status: row.status, ...decode(row.payload),
         error: row.last_error, deletedBetCount: bets.filter(bet => bet.source_id === row.id && decode(bet.payload).deletedAt).length,
+        deletionNotifications: receipts.filter(receipt => receipt.kind === 'delete' && bets.some(bet => bet.id === receipt.bet_row_id && bet.source_id === row.id))
+          .map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at,
+            betId: decode(bets.find(bet => bet.id === receipt.bet_row_id).payload).betId })),
         bets: bets.filter(bet => bet.source_id === row.id && !decode(bet.payload).deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
           revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...decode(bet.payload),
           notifications: receipts.filter(receipt => receipt.bet_row_id === bet.id).map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at })) })) })),
@@ -232,7 +235,9 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         const after = { ...before, deletedAt: at };
         await connection.execute('UPDATE hub_confirm_bets SET payload = ?, revision = revision + 1, updated_at = ? WHERE id = ?', [JSON.stringify(after), at, id]);
         await history(connection, row.source_id, id, 'delete', before, after, actor);
-        return { id, sourceId: row.source_id, revision: row.revision + 1, deletedAt: at };
+        await connection.execute("UPDATE hub_confirm_notifications SET status = 'cancelled', updated_at = ? WHERE bet_row_id = ? AND status IN ('pending', 'error')", [at, id]);
+        const notification = await notifications.enqueue(connection, row.source_id, id, row.revision + 1, 'delete', after);
+        return { id, sourceId: row.source_id, revision: row.revision + 1, deletedAt: at, notification };
       });
     },
     async addManual(id, input, actor = 'app') {

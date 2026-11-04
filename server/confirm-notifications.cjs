@@ -2,13 +2,16 @@ const { createHash } = require('node:crypto');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const dollars = value => value == null ? 'Not provided' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 function notificationText(kind, bet) {
-  const lines = [kind === 'logged' ? 'BET LOGGED' : bet.grade === 'UNGRADED' ? 'BET GRADE CLEARED' : 'BET GRADED',
-    `Bet ID: ${bet.betId}`, `Game: ${bet.game || 'Needs review'}`, `Team: ${bet.team || 'Needs review'}`,
-    `Bet: ${bet.bet || 'Needs review'}`, `Risk: ${dollars(bet.risk)}`, `Odds: ${bet.odds == null ? 'Not provided' : bet.odds > 0 ? `+${bet.odds}` : bet.odds}`,
-    `Partner: ${bet.partnerName || 'Unknown'}`, `Bettor: ${bet.bettorName || 'Needs review'}`, `Bet date (ET): ${bet.betDate || 'Needs review'}`];
-  if (kind === 'grade') lines.push(`Grade: ${bet.grade}`, `Net P/L: ${bet.pl == null ? 'Ungraded' : `${bet.pl > 0 ? '+' : ''}${dollars(bet.pl)}`}`);
-  else if (!bet.complete) lines.push('Some details need review in Confirms.');
-  return lines.join('\n');
+  const odds = bet.odds == null ? 'Not provided' : bet.odds > 0 ? `+${bet.odds}` : bet.odds;
+  const text = (value, fallback) => String(value || fallback).replace(/\s+/g, ' ').trim();
+  const description = `${text(bet.partnerName, 'Unknown partner')}'s ${bet.betId} bet on ${text(bet.team, 'a team needing review')} ${text(bet.bet, 'a market needing review')} (${text(bet.game, 'game needing review')}, ${text(bet.betDate, 'date needing review')} ET), risking ${dollars(bet.risk)} at ${odds}`;
+  if (kind === 'delete') return `${description}, was deleted from the bet log.`;
+  if (kind === 'grade') {
+    if (bet.grade === 'UNGRADED') return `${description}, is now ungraded with net P/L pending.`;
+    const pl = bet.pl == null ? 'pending' : `${bet.pl > 0 ? '+' : ''}${dollars(bet.pl)}`;
+    return `${description}, was graded ${bet.grade} with net P/L of ${pl}.`;
+  }
+  return `${description}, was logged${bet.complete ? '' : '; some details need review in Confirms'}.`;
 }
 
 function createConfirmNotifications({ telegramService, now = () => new Date(), logger = console } = {}) {
@@ -30,6 +33,7 @@ function createConfirmNotifications({ telegramService, now = () => new Date(), l
         (id, bet_row_id, bet_revision, source_id, bot_id, chat_id, kind, payload, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
       [id, betId, revision, sourceId, bet.telegramBotId, bet.telegramChatId, kind, JSON.stringify({ text: notificationText(kind, bet) }), at, at]);
+      return { id, kind, status: 'pending', error: null, updatedAt: at };
     },
     async flush(pool) {
       if (!telegramService) return;
@@ -48,16 +52,17 @@ function createConfirmNotifications({ telegramService, now = () => new Date(), l
           WHERE n.status = 'pending' OR (n.status = 'error' AND n.attempts < 3 AND n.retry_at_ms <= ?)
           ORDER BY n.created_at, n.bet_revision, n.id LIMIT 10`, [now().getTime()]);
         for (const job of jobs) {
-          if (decode(job.bet_payload).deletedAt) {
+          if (decode(job.bet_payload).deletedAt && job.kind !== 'delete') {
             await db.execute("UPDATE hub_confirm_notifications SET status = 'cancelled', updated_at = ? WHERE id = ?", [now().toISOString(), job.id]);
             continue;
           }
           // Pause later messages for this bet while an earlier receipt awaits a
           // definitive delivery. This keeps LOGGED before GRADED after failures.
-          const [[earlier]] = await db.execute(`SELECT COUNT(*) AS n FROM hub_confirm_notifications
+          const [[earlier]] = job.kind === 'delete' ? [[{ n: 0 }]] : await db.execute(`SELECT COUNT(*) AS n FROM hub_confirm_notifications
             WHERE bet_row_id = ? AND bet_revision < ? AND (status IN ('pending', 'sending') OR (status = 'error' AND attempts < 3))`, [job.bet_row_id, job.bet_revision]);
           if (Number(earlier.n)) continue;
-          await db.execute("UPDATE hub_confirm_notifications SET status = 'sending', attempts = attempts + 1, updated_at = ? WHERE id = ?", [now().toISOString(), job.id]);
+          const [claimed] = await db.execute("UPDATE hub_confirm_notifications SET status = 'sending', attempts = attempts + 1, updated_at = ? WHERE id = ? AND status IN ('pending', 'error')", [now().toISOString(), job.id]);
+          if (!claimed.affectedRows) continue;
           try {
             const result = await telegramService.sendMessage({ chatId: String(job.chat_id), expectedBotId: String(job.bot_id), text: decode(job.payload).text });
             await db.execute("UPDATE hub_confirm_notifications SET status = 'sent', telegram_message_id = ?, last_error = NULL, updated_at = ? WHERE id = ?",
