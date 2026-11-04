@@ -35,21 +35,24 @@ function fixture() {
     fail(error) { failure = error; }, lock(value) { acquired = value; }, deleteBet() { deleted = true; } };
 }
 
-test('receipts contain complete log details and net results for every grade', () => {
+test('receipts use compact bet details and outcome emojis without repeating chat context', () => {
   assert.equal(notificationText('logged', { ...bet, partnerName: 'trevor_partner', risk: 100 }),
-    "trevor_partner's HAN187 bet on Hanwha Life Esports Moneyline (Hanwha Life Esports vs Bilibili Gaming, 2026-11-04 ET), risking $100.00 at -110, was logged.");
-  assert.doesNotMatch(notificationText('logged', bet), /\n|Bettor|Luke/);
-  assert.match(notificationText('grade', bet), /was graded WIN with net P\/L of \+\$454.55\./);
+    'Hanwha Life Esports Moneyline, risking $100.00 at -110, was logged.');
+  for (const kind of ['logged', 'grade', 'delete']) assert.doesNotMatch(notificationText(kind, bet), /\n|Bettor|Luke|Trevor|HAN187|Bilibili|2026-11-04/);
+  assert.match(notificationText('grade', bet), /was graded WIN with net P\/L of \+\$454.55\. ✅$/);
+  assert.equal(notificationText('grade', { ...bet, risk: 1, grade: 'LOSS', pl: -1 }),
+    'Hanwha Life Esports Moneyline, risking $1.00 at -110, was graded LOSS with net P/L of -$1.00. ❌');
   assert.doesNotMatch(notificationText('grade', bet), /\n|Bettor|Luke/);
   for (const [grade, pl, text] of [['LOSS', -500, '-$500.00'], ['VOID', 0, '$0.00'], ['PARTRETURN', -25, '-$25.00']]) {
     assert.ok(notificationText('grade', { ...bet, grade, pl }).includes(`was graded ${grade} with net P/L of ${text}.`));
   }
   assert.match(notificationText('grade', { ...bet, grade: 'UNGRADED', pl: null }), /is now ungraded with net P\/L pending\./);
   assert.equal(notificationText('grade', { ...bet, betId: 'GEN336', game: 'Gen.G vs LYON', team: 'Gen.G', bet: 'Map 1', risk: 250, odds: 100, partnerName: 'trevor_partner', grade: 'VOID', pl: 0 }),
-    "trevor_partner's GEN336 bet on Gen.G Map 1 (Gen.G vs LYON, 2026-11-04 ET), risking $250.00 at +100, was graded VOID with net P/L of $0.00.");
+    'Gen.G Map 1, risking $250.00 at +100, was graded VOID with net P/L of $0.00.');
   assert.match(notificationText('logged', { ...bet, complete: false, risk: null, odds: null }), /Not provided/);
   assert.match(notificationText('logged', { ...bet, complete: false }), /some details need review in Confirms/);
-  assert.match(notificationText('delete', bet), /Trevor's HAN187 bet on .*was deleted from the bet log\./);
+  assert.equal(notificationText('delete', { ...bet, team: 'Gen.G', bet: 'Map 1', risk: 250, odds: 100 }),
+    'Gen.G Map 1, risking $250.00 at +100, was deleted from the bet log. 🗑');
   assert.doesNotMatch(notificationText('delete', bet), /\n|Bettor|Luke|graded/);
 });
 

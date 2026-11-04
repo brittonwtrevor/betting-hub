@@ -129,6 +129,26 @@ test('database errors have actionable statuses and never reveal connection detai
   assert.doesNotMatch(failed.body, /private-host|secret|SELECT/);
 });
 
+test('hockey API is authenticated, read-only, uncached, and hides database failures', async () => {
+  let reads = 0;
+  const data = { games: [{ id: '1' }], columns: [], source: { table: 'hub_hockey_future_games' } };
+  const useHandler = createHandler({ ...credentials, directory, hockeyGamesService: { async getFutureGames() { reads++; return data; } } });
+  const url = '/api/hockey/future-games';
+  assert.equal((await request(url, { useHandler })).status, 401);
+  assert.equal((await request(url, { useHandler, authorization: auth, method: 'POST' })).status, 405);
+  assert.equal(reads, 0);
+  const result = await request(url, { useHandler, authorization: auth });
+  assert.deepEqual(JSON.parse(result.body), data);
+  assert.equal(result.headers['Cache-Control'], 'private, no-store');
+  assert.equal((await request(url, { useHandler, authorization: auth, method: 'HEAD' })).body, '');
+  for (const [code, expected] of [['ER_NO_SUCH_TABLE', 503], ['DB_NOT_CONFIGURED', 503], ['PRIVATE_ERROR', 502]]) {
+    const failureHandler = createHandler({ ...credentials, directory, hockeyGamesService: { async getFutureGames() { throw Object.assign(new Error('private-host password=secret'), { code }); } } });
+    const failure = await request(url, { useHandler: failureHandler, authorization: auth });
+    assert.equal(failure.status, expected);
+    assert.doesNotMatch(failure.body, /private-host|secret/);
+  }
+});
+
 
 test('draft writes are authenticated, JSON-only, and reject cross-site requests', async () => {
   let writes = 0;

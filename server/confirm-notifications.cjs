@@ -4,12 +4,13 @@ const dollars = value => value == null ? 'Not provided' : new Intl.NumberFormat(
 function notificationText(kind, bet) {
   const odds = bet.odds == null ? 'Not provided' : bet.odds > 0 ? `+${bet.odds}` : bet.odds;
   const text = (value, fallback) => String(value || fallback).replace(/\s+/g, ' ').trim();
-  const description = `${text(bet.partnerName, 'Unknown partner')}'s ${bet.betId} bet on ${text(bet.team, 'a team needing review')} ${text(bet.bet, 'a market needing review')} (${text(bet.game, 'game needing review')}, ${text(bet.betDate, 'date needing review')} ET), risking ${dollars(bet.risk)} at ${odds}`;
-  if (kind === 'delete') return `${description}, was deleted from the bet log.`;
+  const description = `${text(bet.team, 'Team needing review')} ${text(bet.bet, 'market needing review')}, risking ${dollars(bet.risk)} at ${odds}`;
+  if (kind === 'delete') return `${description}, was deleted from the bet log. 🗑`;
   if (kind === 'grade') {
     if (bet.grade === 'UNGRADED') return `${description}, is now ungraded with net P/L pending.`;
     const pl = bet.pl == null ? 'pending' : `${bet.pl > 0 ? '+' : ''}${dollars(bet.pl)}`;
-    return `${description}, was graded ${bet.grade} with net P/L of ${pl}.`;
+    const emoji = bet.grade === 'WIN' ? ' ✅' : bet.grade === 'LOSS' ? ' ❌' : '';
+    return `${description}, was graded ${bet.grade} with net P/L of ${pl}.${emoji}`;
   }
   return `${description}, was logged${bet.complete ? '' : '; some details need review in Confirms'}.`;
 }

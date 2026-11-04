@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -210,6 +210,20 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD' });
     }
 
+    if (pathname === '/api/hockey/future-games') {
+      try {
+        if (!hockeyGamesService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
+        return reply(response, 200, JSON.stringify(await hockeyGamesService.getFutureGames()), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      } catch (error) {
+        const unpublished = ['ER_NO_SUCH_TABLE', 'HOCKEY_NOT_PUBLISHED'].includes(error.code);
+        const unconfigured = error.code === 'DB_NOT_CONFIGURED';
+        return reply(response, unpublished || unconfigured ? 503 : 502, JSON.stringify({
+          code: unpublished ? 'HOCKEY_NOT_PUBLISHED' : unconfigured ? 'DB_NOT_CONFIGURED' : 'DB_UNAVAILABLE',
+          message: unpublished ? 'Hockey Future Games have not been published yet. Run the hockey publisher after exporting Shiny data.'
+            : unconfigured ? 'Hockey data connection is not configured yet.' : 'Unable to load hockey data. Try refreshing shortly.',
+        }), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      }
+    }
     if (pathname === '/api/lol/upcoming-games') {
       try {
         if (!upcomingGamesService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
@@ -261,6 +275,7 @@ if (require.main === module) {
   try {
     const development = process.argv.includes('--dev');
     const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
+    const hockeyGamesService = require('./hockey.cjs').createHockeyGamesService();
     const sendsService = require('./sends.cjs').createSendsService();
     const partnersService = require('./partners.cjs').createPartnersService();
     const telegramService = require('./telegram.cjs').createTelegramService();
@@ -271,7 +286,7 @@ if (require.main === module) {
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService,
+      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
@@ -283,7 +298,7 @@ if (require.main === module) {
       server.close();
       await confirmsService.close();
       await telegramReceiver.close();
-      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), partnersService.close()]);
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close()]);
     }
     process.once('SIGTERM', () => { void shutdown(); });
     process.once('SIGINT', () => { void shutdown(); });

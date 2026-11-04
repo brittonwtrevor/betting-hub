@@ -2,6 +2,8 @@
 
 A React workspace for betting operations, research, and reporting, hosted on DigitalOcean App Platform.
 
+Hockey Future Games now has a dedicated DigitalOcean-backed dashboard. See [hockey setup and pipeline refresh](docs/hockey-future-games.md) for the publisher and the combined runner that preserves the existing Shiny flow.
+
 ## Workspaces
 
 - **Monitoring:** planned sources, data freshness, model-to-hub delivery stages, run history, and attention items.
@@ -44,7 +46,7 @@ Click a LoL game row or its Team A name in Sports Dashboards or Trading Dashboar
 
 The server extracts context from the original send and uses AI only to interpret the reply. It never substitutes a play-to price for reported odds. Missing or ambiguous fields are left blank and marked for review. **Save** persists field changes and grades; polling preserves unsaved form edits and stale revision checks prevent overwriting changes from another screen. **Reset edits** restores the saved row. Manual entry works even without an AI key. Later Telegram edits flag review and preserve existing bet corrections and grades; AI retries cannot replace saved rows.
 
-New AI-created fills queue a single-sentence Telegram confirmation containing Bet ID, game, team, market, risk, odds, partner, and bet date, ending with "was logged." Telegram receipts identify the partner and omit the separate bettor field. Saving a changed grade/result queues a single sentence with those details, the grade, and signed net P/L; clearing a grade sends a sentence saying the bet is now ungraded. Each receipt goes to the original reply's numeric chat ID using its original bot, independent of later partner channel edits. Existing historical fills do not generate retroactive log receipts. Manual row additions and edits that do not change the grade/result do not generate messages.
+New AI-created fills queue a single-sentence Telegram confirmation containing team, market, risk, and odds, ending with "was logged." Telegram receipts omit the partner/bettor names, Bet ID, full matchup, and date; those remain stored with the bet. Saving a changed grade/result sends the same compact details with grade and signed net P/L, ending with ✅ for WIN or ❌ for LOSS. Deletion notices end with 🗑. Clearing a grade sends a sentence saying the bet is now ungraded. Each receipt goes to the original reply's numeric chat ID using its original bot, independent of later partner channel edits. Existing historical fills do not generate retroactive log receipts. Manual row additions and edits that do not change the grade/result do not generate messages.
 
 Receipts are saved transactionally with the bet/grade/deletion in `hub_confirm_notifications` and delivered by the background worker every 10 seconds. The outbox keys each event by bet row/revision/type; refreshes and worker restarts cannot repeat confirmed sends. Confirmed Telegram rejections retry up to three times, one minute apart. Timeouts or interrupted sends are marked **Delivery unconfirmed** and never automatically resent, since Telegram has no delivery idempotency key. The latest log/grade delivery status and sanitized failure message appear in Confirms. Deleting a bet cancels queued log/grade receipts and queues a single-sentence notice ending "was deleted from the bet log" to the original partner chat. Deletion delivery status remains visible below the raw reply after the row is removed. Receipt failures cannot erase saved bets or raw replies. The outbox requires CREATE/SELECT/INSERT/UPDATE permissions on the existing database connection.
 
