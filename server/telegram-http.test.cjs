@@ -5,8 +5,8 @@ const path = require('node:path');
 const { createHandler } = require('./index.cjs');
 const auth = `Basic ${Buffer.from('test-user:test-password').toString('base64')}`;
 const headers = { authorization: auth, 'x-forwarded-proto': 'https', 'x-betting-hub': 'telegram', 'content-type': 'application/json' };
-function fixture(service) {
-  const handler = createHandler({ username: 'test-user', password: 'test-password', directory: path.join(__dirname, '..', 'public'), telegramService: service });
+function fixture(service, receiver) {
+  const handler = createHandler({ username: 'test-user', password: 'test-password', directory: path.join(__dirname, '..', 'public'), telegramService: service, telegramReceiver: receiver });
   return async (url, options = {}) => {
     const req = Readable.from([options.raw ?? JSON.stringify(options.body || {})]);
     Object.assign(req, { url, method: options.method || 'POST', socket: {}, headers: { ...headers, ...options.headers } });
@@ -35,8 +35,8 @@ test('Telegram routes enforce login, TLS, same-site JSON writes, and body limits
 
 test('dispatches only supported operations and keeps config responses uncached and HEAD body-free', async () => {
   const calls = [];
-  const service = Object.fromEntries(['getConfig', 'saveConfig', 'testConnection', 'readUpdates', 'sendMessage'].map(method => [method, async body => { calls.push([method, body]); return { configured: true }; }]));
-  const request = fixture(service);
+  const service = Object.fromEntries(['getConfig', 'saveConfig', 'testConnection', 'sendMessage', 'readInbox'].map(method => [method, async body => { calls.push([method, body]); return { configured: true }; }]));
+  const request = fixture(service, service);
   const config = await request('/api/telegram/config', { method: 'GET' });
   assert.equal(config.status, 200);
   assert.equal(config.headers['Cache-Control'], 'private, no-store');
@@ -46,8 +46,18 @@ test('dispatches only supported operations and keeps config responses uncached a
     assert.equal((await request(`/api/telegram/${action}`, { method: 'HEAD' })).status, 405);
     assert.equal((await request(`/api/telegram/${action}`, { body: { text: 'test' } })).status, 200);
   }
-  assert.deepEqual(calls.map(call => call[0]), ['getConfig', 'getConfig', 'testConnection', 'readUpdates', 'sendMessage']);
+  assert.deepEqual(calls.map(call => call[0]), ['getConfig', 'getConfig', 'testConnection', 'readInbox', 'sendMessage']);
   assert.equal((await request('/api/telegram/unknown')).status, 405);
+});
+
+test('saved inbox requires authentication and never bypasses storage to read Telegram directly', async () => {
+  let reads = 0;
+  const request = fixture({}, { async readInbox() { reads++; return { messages: [] }; } });
+  assert.equal((await request('/api/telegram/updates', { headers: { authorization: '' } })).status, 401);
+  assert.equal(reads, 0);
+  assert.equal((await request('/api/telegram/updates')).status, 200);
+  assert.equal(reads, 1);
+  assert.equal((await fixture({})('/api/telegram/updates')).status, 503);
 });
 
 test('service failures do not expose credentials or connection details', async () => {

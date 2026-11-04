@@ -92,25 +92,32 @@ test('rejects invalid runtime tokens before contacting Telegram and allows manua
   assert.equal((await f.service.getConfig()).configured, true);
 });
 
-test('tests connection and reads pending messages without sending, acknowledging, or changing subscriptions', async () => {
+test('polls only with the durable receiver offset and subscribes to new and edited chat messages', async () => {
   const f = fixture();
   await f.service.saveConfig({ token });
   const status = await f.service.testConnection();
   assert.equal(status.webhookActive, false);
   assert.equal(status.bot.canReadAllGroupMessages, true);
-  const inbox = await f.service.readUpdates();
-  assert.equal(inbox.messages[0].chatId, '-1001234567890');
-  assert.equal(inbox.messages[0].text, 'hello');
-  assert.equal(inbox.messages[0].updateId, 42);
-  assert.deepEqual(f.calls.find(call => call.method === 'getUpdates').body, { timeout: 0, limit: 100 });
+  const updates = await f.service.receiveUpdates({ botId: bot.id, offset: 42 });
+  assert.equal(updates[0].message.text, 'hello');
+  assert.deepEqual(f.calls.find(call => call.method === 'getUpdates').body, { timeout: 0, limit: 100, offset: 42, allowed_updates: ['message', 'edited_message', 'channel_post', 'edited_channel_post'] });
+  await f.service.receiveUpdates({ botId: bot.id });
+  assert.equal(Object.hasOwn(f.calls.filter(call => call.method === 'getUpdates')[1].body, 'offset'), false);
   assert.ok(f.calls.every(call => ['getMe', 'getWebhookInfo', 'getUpdates'].includes(call.method)));
 });
 
 test('preserves an existing webhook and does not try polling it', async () => {
   const f = fixture({ webhook: 'https://existing.example/secret' });
   await f.service.saveConfig({ token });
-  await assert.rejects(f.service.readUpdates(), error => error.status === 409 && !error.message.includes('existing.example'));
+  await assert.rejects(f.service.receiveUpdates({ botId: bot.id }), error => error.status === 409 && !error.message.includes('existing.example'));
   assert.ok(f.calls.every(call => ['getMe', 'getWebhookInfo'].includes(call.method)));
+});
+
+test('does not apply a previous bot cursor after changing the configured bot', async () => {
+  const f = fixture();
+  await f.service.saveConfig({ token });
+  await assert.rejects(f.service.receiveUpdates({ botId: 999, offset: 100 }), error => error.status === 409);
+  assert.equal(f.calls.some(call => call.method === 'getUpdates'), false);
 });
 
 test('sends exactly once using only the requested destination and text', async () => {
@@ -120,6 +127,13 @@ test('sends exactly once using only the requested destination and text', async (
   const sent = f.calls.filter(call => call.method === 'sendMessage');
   assert.equal(sent.length, 1);
   assert.deepEqual(sent[0].body, { chat_id: '-1001234567890', text: 'test message' });
+});
+
+test('marks send network timeouts as uncertain so card retries cannot duplicate delivery', async () => {
+  const f = fixture();
+  await f.service.saveConfig({ token });
+  const service = createTelegramService({ env, createPool: () => f.pool, fetchImpl: async () => { throw new Error('network timeout'); } });
+  await assert.rejects(service.sendMessage({ chatId: '-100123', text: 'test message' }), error => error.deliveryUncertain === true && error.telegramSafe && /Check the chat/.test(error.message));
 });
 
 test('does not replace a working saved token when Telegram rejects a replacement', async () => {

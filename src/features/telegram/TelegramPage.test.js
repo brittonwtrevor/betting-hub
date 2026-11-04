@@ -24,14 +24,14 @@ test('loads only masked configuration and saves token to the protected backend, 
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
-test('reading is manual and sends only after submitting the composer', async () => {
+test('refreshes the saved inbox and sends only after submitting the composer', async () => {
   fetch.mockResolvedValueOnce(response(saved))
     .mockResolvedValueOnce(response({ messages: [{ updateId: 1, kind: 'message', chat: 'Test group', chatId: '-1001234567890', from: 'trevor', text: 'hello', date: '2026-11-04T15:00:00Z' }], fetchedAt: '2026-11-04T15:00:00Z' }))
     .mockResolvedValueOnce(response({ message: { chat: 'Test group', chatId: '-1001234567890', date: '2026-11-04T15:00:00Z' } }));
   render(<TelegramPage />);
   await screen.findByText('@test_bot');
   expect(fetch).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Read pending messages' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh saved messages' }));
   await screen.findByText('hello');
   fireEvent.click(screen.getByRole('button', { name: 'Use this chat' }));
   fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'a reply' } });
@@ -51,4 +51,21 @@ test('retains an unsent message and reports delivery failure without retrying', 
   expect(await screen.findByRole('alert')).toHaveTextContent('Check the chat before retrying.');
   expect(screen.getByLabelText('Message')).toHaveValue('keep this');
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+test('shows linked bet IDs and receiver failures while preserving saved inbox results after a refresh error', async () => {
+  fetch.mockResolvedValueOnce(response(saved))
+    .mockResolvedValueOnce(response({ messages: [{ updateId: 42, kind: 'edited_message', chat: 'trevor_partner', chatId: '-1001234567890', text: 'BOS145 ML -110 $500', betIds: ['BOS145'], date: '2026-11-04T18:00:00Z' }],
+      receiver: { lastPolledAt: '2026-11-04T18:00:00Z', error: 'Existing webhook blocks receiving.' } }))
+    .mockResolvedValueOnce({ ok: false, json: async () => ({ message: 'Database temporarily unavailable.' }) });
+  render(<TelegramPage />);
+  await screen.findByText('@test_bot');
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh saved messages' }));
+  await screen.findByText('BOS145 ML -110 $500');
+  expect(screen.getByText(/Bet ID: BOS145/)).toHaveTextContent('Edited');
+  expect(screen.getByRole('alert')).toHaveTextContent('Existing webhook');
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh saved messages' }));
+  await screen.findByText('Database temporarily unavailable.');
+  expect(screen.getByText('BOS145 ML -110 $500')).toBeInTheDocument();
+  expect(fetch.mock.calls.filter(([url]) => url === '/api/telegram/updates')).toHaveLength(2);
 });

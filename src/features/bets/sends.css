@@ -4,17 +4,18 @@
 .send-card { min-width: 0; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; overflow: hidden; }
 .send-card-header { padding: 15px 20px; }
 .send-card-header h2 { font-size: 14px; font-weight: 600; }
+.send-bet-id { display: inline-block; margin-left: 12px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: #f8f9fc; color: var(--accent); font-family: monospace; font-size: 12px; letter-spacing: .06em; }
 .send-card-header p { font-size: 10px; color: var(--muted); margin-top: 6px; }
 .send-markets input { width: 145px; border: 1px solid #dfe5ef; border-radius: 5px; padding: 7px 9px; font-size: 11px; }
-.send-card-details { display: flex; flex-wrap: wrap; gap: 20px; padding: 14px 20px; }
-.send-card-details fieldset { margin: 0; padding: 0; border: 0; flex: 1 1 260px; }
-.send-card-details legend, .send-notes { font-size: 11px; font-weight: 550; }
-.send-card-details fieldset label { display: inline-flex; align-items: center; gap: 8px; margin: 12px 20px 0 0; font-size: 11px; }
+.send-card-details fieldset { margin: 0; padding: 0; border: 0; }
+.send-card-details th, .send-notes th { font-size: 11px; font-weight: 550; vertical-align: top; }
+.send-card-details fieldset label { display: inline-flex; align-items: center; gap: 8px; margin: 0 20px 0 0; font-size: 11px; }
 .send-card-details small { display: block; font-size: 10px; color: var(--muted); font-weight: 400; margin-top: 3px; overflow-wrap: anywhere; }
 .send-card-details fieldset p { font-size: 11px; margin-top: 10px; color: var(--accent); }
-.send-notes { display: flex; flex-direction: column; gap: 8px; flex: 1 1 260px; }
+.send-notes td { white-space: normal; }
 .send-notes textarea { width: 100%; resize: vertical; min-height: 60px; border: 1px solid #dfe5ef; border-radius: 5px; padding: 8px; font: inherit; font-weight: 400; }
 .send-card-footer { padding: 12px 20px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted); }
+.send-deliveries { margin: 0; padding: 0 20px 14px 36px; font-size: 11px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
 .sends-error { color: #a52d38; background: #fff3f3; border: 1px solid #f0d2d5; padding: 12px 16px; font-size: 12px; line-height: 1.6; border-radius: 6px; }
 .sends-notice { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 60; max-width: calc(100vw - 24px); padding: 12px 16px; display: flex; align-items: center; gap: 16px; background: #182b28; color: white; border-radius: 8px; box-shadow: 0 4px 20px #0002; font-size: 12px; }
 .sends-notice a { color: #b9f0d7; white-space: nowrap; }

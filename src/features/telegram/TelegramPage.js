@@ -58,7 +58,7 @@ export default function TelegramPage() {
           })}>{busy === 'test' ? 'Checking…' : 'Test connection'}</button></div>
         </fieldset>
       </form>
-      {connection && <div className="telegram-connection"><p>Receiving: {connection.webhookActive ? 'Existing webhook active' : 'Manual pending update preview ready'}</p><p>Group privacy: {connection.bot.canReadAllGroupMessages ? 'All group messages enabled' : 'Privacy mode enabled; some group messages are hidden from the bot'}</p><p>Pending updates: {connection.pendingUpdates}</p></div>}
+      {connection && <div className="telegram-connection"><p>Receiving: {connection.webhookActive ? 'Existing webhook blocks polling' : 'Server checks for new messages every 10 seconds'}</p><p>Group privacy: {connection.bot.canReadAllGroupMessages ? 'All group messages enabled' : 'Privacy mode enabled; some group messages are hidden from the bot'}</p><p>Pending updates: {connection.pendingUpdates}</p></div>}
     </Panel>
     {loading && <p role="status">Loading Telegram connection…</p>}
     {error && <p className="telegram-error" role="alert">{error}</p>}
@@ -79,16 +79,17 @@ export default function TelegramPage() {
           </fieldset>
         </form>
       </Panel>
-      <Panel title="Pending inbox" description="Preview up to 100 pending updates. Refresh manually to check for messages." action={<button type="button" className="button button-secondary" disabled={disabled || !config?.configured} onClick={() => run('read', async () => {
-        setInbox(null); setInbox(await api('updates'));
-      })}>{busy === 'read' ? 'Reading…' : 'Read pending messages'}</button>}>
+      <Panel title="Saved inbox" description="The server checks Telegram every 10 seconds and saves incoming messages to DigitalOcean. Refresh to view the latest 100 saved messages." action={<button type="button" className="button button-secondary" disabled={disabled || !config?.configured} onClick={() => run('read', async () => {
+        setInbox(await api('updates'));
+      })}>{busy === 'read' ? 'Loading…' : 'Refresh saved messages'}</button>}>
         {inbox?.messages.length ? <ul className="telegram-messages">{inbox.messages.map(message => <li key={`${message.updateId}-${message.kind}`}>
-          <div><strong>{message.chat}</strong><span>{eastern(message.date)} ET</span></div><p className="telegram-message-meta">Chat ID: {message.chatId}{message.from ? ` · ${message.from}` : ''}{message.kind.startsWith('edited') ? ' · Edited' : ''}</p><p className="telegram-message-text">{message.text}</p>
+          <div><strong>{message.chat}</strong><span>{eastern(message.date)} ET</span></div><p className="telegram-message-meta">Chat ID: {message.chatId}{message.from ? ` · ${message.from}` : ''}{message.kind.startsWith('edited') ? ' · Edited' : ''}{message.betIds?.length ? ` · Bet ID: ${message.betIds.join(', ')}` : ' · No matched bet ID'}</p><p className="telegram-message-text">{message.text || (message.hasMedia ? '[Media message · text extraction is not enabled]' : '[Message without text]')}</p>
           <button type="button" className="partner-link" disabled={disabled} onClick={() => { setDestination(message.chatId); document.getElementById('telegram-message').focus(); }}>Use this chat</button>
-        </li>)}</ul> : <EmptyState compact title={inbox ? 'No pending text or media messages' : 'Ready when your bot is connected'} description={inbox ? `${inbox.updateCount} updates checked. Send a new message to the bot, then refresh.` : 'Send /start to your bot in Telegram, then read pending messages to find your chat ID.'} />}
-        {inbox && <p className="telegram-inbox-note">Checked {eastern(inbox.fetchedAt)} ET. Updates stay pending, so repeated refreshes may show the same messages.</p>}
+        </li>)}</ul> : <EmptyState compact title={inbox ? 'No saved messages yet' : 'Ready when your bot is connected'} description={inbox ? 'Send a new message in a partner chat the bot can read, wait 10 seconds, then refresh.' : 'Refresh saved messages to view the inbox and find chat IDs.'} />}
+        {inbox?.receiver?.error && <p className="telegram-error" role="alert">{inbox.receiver.error}</p>}
+        {inbox && <p className="telegram-inbox-note">Last successful Telegram check: {eastern(inbox.receiver?.lastPolledAt)} ET. {inbox.receiver?.enabled === false ? 'Background receiving is disabled on this server.' : 'Receiving continues while this page is closed.'} Messages without IDs are also preserved. Raw messages do not create confirmed bets yet.</p>}
       </Panel>
     </div>
-    <InfoNote>Add the bot to your group, or make it a channel administrator with permission to post. The inbox shows pending bot updates, not chat history. An existing webhook or another reader can affect availability. Automatic receiving and bet confirmations will be connected later.</InfoNote>
+    <InfoNote>Add the bettingtasks bot to each partner chat with permission to read messages. In groups, make it an administrator or disable privacy mode through BotFather so plain replies reach the bot. Channels require administrator access; replies in a linked discussion group require access to that group too. Saved messages remain in DigitalOcean. Telegram only provides new or pending bot updates, with up to 24 hours of backlog.</InfoNote>
   </div>;
 }

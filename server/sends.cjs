@@ -1,6 +1,7 @@
-const { createHash, randomUUID } = require('node:crypto');
+const { createHash, randomUUID, randomInt } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
 const { allMarkets } = require('../src/features/bets/markets');
+const { chatId } = require('./telegram.cjs');
 const invalid = message => Object.assign(new Error(message), { status: 400 });
 function text(value, max = 200, required = false) {
   if (value == null && !required) return '';
@@ -50,16 +51,48 @@ function editDraft(draft, input) {
   const recipients = input.recipients.map(partner => ({ id: text(partner?.id, 100, true), name: text(partner?.name, 200, true), telegramChannel: text(partner?.telegramChannel, 200) }));
   return { ...draft, markets, recipients, notes: text(input.notes, 2000) };
 }
-function createSendsService({ env = process.env, createPool, now = () => new Date(), makeId = randomUUID } = {}) {
+function teamPrefix(draft) {
+  const side = draft.markets.find(market => /^[ab]:/.test(market.id))?.id[0] || 'a';
+  return draft.game[`team_${side}`].normalize('NFKD').replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
+}
+function telegramText(draft) {
+  for (const market of draft.markets) {
+    if (!market.playTo) throw invalid(`Enter a play-to price for ${market.label} before sending.`);
+    if (market.needsLine && !market.line) throw invalid(`Enter a total for ${market.label} before sending.`);
+  }
+  const timestamp = draft.game.begin_at.trim().replace(' ', 'T');
+  const start = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`);
+  const when = start.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const message = [
+    `Bet ID: ${draft.betId}`,
+    `${draft.game.team_a} vs ${draft.game.team_b}`,
+    `League of Legends · ${draft.game.league} · ${draft.game.series_format || 'Format unknown'} · ${when}`,
+    '',
+    ...draft.markets.map(market => `• ${market.label}${market.needsLine ? ` ${market.line}` : ''} · Play to ${Number(market.playTo) > 0 ? '+' : ''}${Number(market.playTo)}`),
+    ...(draft.notes ? ['', `Notes: ${draft.notes}`] : []),
+  ].join('\n');
+  if (message.length > 4096) throw invalid('This card exceeds Telegram’s 4,096-character limit. Shorten the notes or remove some markets.');
+  return message;
+}
+function requireIdle(draft) {
+  if (draft.deliveries?.some(delivery => delivery.status === 'sending')) throw Object.assign(new Error('A Telegram send is in progress or awaiting delivery confirmation. Refresh Sends and check the partner chat.'), { status: 409 });
+}
+function createSendsService({ env = process.env, createPool, now = () => new Date(), makeId = randomUUID, numberStart = () => randomInt(1000) } = {}) {
   let pool;
   let schema;
   async function database() {
     if (!pool) pool = (createPool || require('mysql2/promise').createPool)(mysqlOptions(env));
-    if (!schema) schema = pool.query(`CREATE TABLE IF NOT EXISTS hub_send_drafts (
+    if (!schema) schema = (async () => {
+      await pool.query(`CREATE TABLE IF NOT EXISTS hub_send_drafts (
       id VARCHAR(36) PRIMARY KEY, game_key CHAR(64) NOT NULL UNIQUE,
       revision INT NOT NULL DEFAULT 1, payload JSON NOT NULL,
       created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-    )`).catch(error => { schema = null; throw error; });
+      )`);
+      // Keep reservations after a card is removed so an old reply cannot identify a new send.
+      await pool.query(`CREATE TABLE IF NOT EXISTS hub_send_ids (
+        bet_id CHAR(6) PRIMARY KEY, draft_id VARCHAR(36) NOT NULL UNIQUE
+      )`);
+    })().catch(error => { schema = null; throw error; });
     await schema;
     return pool;
   }
@@ -71,11 +104,53 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
     catch (error) { await connection.rollback(); throw error; }
     finally { connection.release(); }
   }
+  async function identify(connection, draft) {
+    if (draft.betId) return draft;
+    const [[reserved]] = await connection.execute('SELECT bet_id FROM hub_send_ids WHERE draft_id = ?', [draft.id]);
+    let betId = reserved?.bet_id;
+    const prefix = teamPrefix(draft);
+    const start = numberStart();
+    for (let offset = 0; !betId && offset < 1000; offset++) {
+      const candidate = `${prefix}${String((start + offset) % 1000).padStart(3, '0')}`;
+      try {
+        await connection.execute('INSERT INTO hub_send_ids (bet_id, draft_id) VALUES (?, ?)', [candidate, draft.id]);
+        betId = candidate;
+      } catch (error) {
+        if (error.code !== 'ER_DUP_ENTRY') throw error;
+      }
+    }
+    if (!betId) throw Object.assign(new Error(`All 1,000 send IDs for ${prefix} have been used.`), { status: 409 });
+    const next = { ...draft, betId };
+    // Assigning metadata leaves the editable draft revision intact.
+    await connection.execute('UPDATE hub_send_drafts SET payload = ? WHERE id = ?', [JSON.stringify(next), draft.id]);
+    return next;
+  }
   return {
+    async findByBetIds(ids) {
+      if (!ids.length) return [];
+      const db = await database();
+      const [rows] = await db.execute(`SELECT ids.bet_id, ids.draft_id, drafts.payload
+        FROM hub_send_ids ids LEFT JOIN hub_send_drafts drafts ON drafts.id = ids.draft_id
+        WHERE ids.bet_id IN (${ids.map(() => '?').join(', ')})`, ids);
+      return rows.map(row => ({ betId: row.bet_id, draftId: row.draft_id,
+        context: row.payload == null ? null : typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload }));
+    },
     async list() {
       const db = await database();
       const [rows] = await db.query('SELECT payload, revision FROM hub_send_drafts ORDER BY created_at DESC, id');
-      return rows.map(decode);
+      const drafts = [];
+      for (const row of rows) {
+        const draft = decode(row);
+        if (draft.betId) drafts.push(draft);
+        else {
+          const identified = await transaction(async connection => {
+            const [[current]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE id = ? FOR UPDATE', [draft.id]);
+            return current ? identify(connection, decode(current)) : null;
+          });
+          if (identified) drafts.push(identified);
+        }
+      }
+      return drafts;
     },
     async add(input) {
       const game = normalizeGame(input?.game);
@@ -85,7 +160,8 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
         const draft = { id: makeId(), game, markets: selected, notes: '', recipients: [], status: 'draft', createdAt: now().toISOString(), updatedAt: now().toISOString() };
         await connection.execute('INSERT INTO hub_send_drafts (id, game_key, payload) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE game_key = game_key', [draft.id, key, JSON.stringify(draft)]);
         const [[row]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE game_key = ? FOR UPDATE', [key]);
-        const existing = decode(row);
+        const existing = await identify(connection, decode(row));
+        requireIdle(existing);
         // Existing prices and publication snapshot stay intact when more markets are selected.
         const additions = chooseMarkets(existing.game, input.marketIds).filter(market => !existing.markets.some(old => old.id === market.id));
         if (!additions.length) return existing;
@@ -99,18 +175,77 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
         const [[row]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE id = ? FOR UPDATE', [id]);
         if (!row) throw Object.assign(new Error('This draft no longer exists. Refresh Sends.'), { status: 404 });
         if (input?.revision !== row.revision) throw Object.assign(new Error('This draft changed on another screen. Refresh Sends before editing again.'), { status: 409 });
-        const next = { ...editDraft(decode(row), input), updatedAt: now().toISOString(), revision: row.revision + 1 };
+        requireIdle(decode(row));
+        const next = { ...editDraft(await identify(connection, decode(row)), input), updatedAt: now().toISOString(), revision: row.revision + 1 };
         await connection.execute('UPDATE hub_send_drafts SET payload = ?, revision = revision + 1 WHERE id = ?', [JSON.stringify(next), id]);
         return next;
       });
     },
+    async send(id, input, telegram) {
+      if (!telegram) throw invalid('Connect your bot on the Telegram page first.');
+      // Reserve delivery in a committed transaction before contacting Telegram. The
+      // fingerprint prevents repeat clicks/retries from duplicating confirmed sends.
+      const prepared = await transaction(async connection => {
+        const [[row]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE id = ? FOR UPDATE', [id]);
+        if (!row) throw Object.assign(new Error('This draft no longer exists. Refresh Sends.'), { status: 404 });
+        if (input?.revision !== row.revision) throw Object.assign(new Error('This draft changed on another screen. Refresh Sends before sending.'), { status: 409 });
+        requireIdle(decode(row));
+        const next = editDraft(await identify(connection, decode(row)), input);
+        if (!next.recipients.length) throw invalid('Select at least one partner / Telegram group before sending.');
+        const destinations = new Map();
+        for (const partner of next.recipients) {
+          let channel;
+          try { channel = chatId(partner.telegramChannel); }
+          catch { throw invalid(`Add a numeric Telegram chat ID or public @channel for ${partner.name} in Partner Accounting. Invite links cannot receive messages.`); }
+          destinations.set(channel.toLowerCase(), { name: partner.name, channel });
+        }
+        const message = telegramText(next);
+        const fingerprint = createHash('sha256').update(message).digest('hex');
+        const deliveries = [...(next.deliveries || [])];
+        const pending = [];
+        for (const { name, channel } of destinations.values()) {
+          const key = createHash('sha256').update(`${channel.toLowerCase()}\n${fingerprint}`).digest('hex');
+          const previous = deliveries.find(delivery => delivery.key === key);
+          if (previous?.status === 'sent' || previous?.status === 'uncertain') continue;
+          const delivery = { key, name, channel, status: 'sending', attemptedAt: now().toISOString() };
+          if (previous) deliveries.splice(deliveries.indexOf(previous), 1, delivery);
+          else deliveries.push(delivery);
+          pending.push(delivery);
+        }
+        const draft = { ...next, deliveries, updatedAt: now().toISOString(), revision: row.revision + 1 };
+        await connection.execute('UPDATE hub_send_drafts SET payload = ?, revision = revision + 1 WHERE id = ?', [JSON.stringify(draft), id]);
+        return { draft, pending, message };
+      });
+      let draft = prepared.draft;
+      for (const delivery of prepared.pending) {
+        let outcome;
+        try {
+          const result = await telegram.sendMessage({ chatId: delivery.channel, text: prepared.message });
+          outcome = { status: 'sent', sentAt: now().toISOString(), messageId: result.message.messageId };
+        } catch (error) {
+          outcome = { status: error.deliveryUncertain || !error.telegramSafe ? 'uncertain' : 'failed', error: error.telegramSafe ? error.message : 'Delivery could not be confirmed. Check the partner chat before sending again.' };
+        }
+        draft = await transaction(async connection => {
+          const [[row]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE id = ? FOR UPDATE', [id]);
+          if (!row) throw Object.assign(new Error('Delivery may have completed. Check Telegram before sending again.'), { status: 409 });
+          const current = decode(row);
+          const next = { ...current, deliveries: current.deliveries.map(item => item.key === delivery.key ? { ...item, ...outcome } : item), revision: row.revision + 1 };
+          await connection.execute('UPDATE hub_send_drafts SET payload = ?, revision = revision + 1 WHERE id = ?', [JSON.stringify(next), id]);
+          return next;
+        });
+      }
+      return draft;
+    },
     async remove(id, revision) {
       if (!Number.isInteger(revision) || revision < 1) throw invalid('Refresh Sends before removing this draft.');
-      const db = await database();
-      const [result] = await db.execute('DELETE FROM hub_send_drafts WHERE id = ? AND revision = ?', [id, revision]);
-      if (!result.affectedRows) throw Object.assign(new Error('This draft changed or was removed. Refresh Sends.'), { status: 409 });
+      await transaction(async connection => {
+        const [[row]] = await connection.execute('SELECT payload, revision FROM hub_send_drafts WHERE id = ? FOR UPDATE', [id]);
+        if (!row || row.revision !== revision) throw Object.assign(new Error('This draft changed or was removed. Refresh Sends.'), { status: 409 });
+        requireIdle(decode(row));
+        await connection.execute('DELETE FROM hub_send_drafts WHERE id = ? AND revision = ?', [id, revision]);
+      });
     },
     async close() { if (pool) await pool.end(); },
   };
 }
-module.exports = { createSendsService, normalizeGame, chooseMarkets, editDraft, gameKey };
+module.exports = { createSendsService, normalizeGame, chooseMarkets, editDraft, gameKey, teamPrefix, telegramText };

@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -98,7 +98,10 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         if (!telegramService) return json(503, { message: 'Telegram is not configured on this server yet.' });
         if (action === 'config') return json(200, request.method === 'PUT' ? await telegramService.saveConfig(body) : await telegramService.getConfig());
         if (action === 'test') return json(200, await telegramService.testConnection());
-        if (action === 'updates') return json(200, await telegramService.readUpdates());
+        if (action === 'updates') {
+          if (!telegramReceiver) return json(503, { message: 'Telegram inbox storage is not configured on this server yet.' });
+          return json(200, await telegramReceiver.readInbox());
+        }
         return json(200, await telegramService.sendMessage(body));
       } catch (error) {
         if (error.telegramSafe) return json(error.status, { message: error.message });
@@ -106,10 +109,11 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       }
     }
 
-    const draftRoute = /^\/api\/send-drafts(?:\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
+    const draftRoute = /^\/api\/send-drafts(?:\/([a-zA-Z0-9-]{1,36})(\/send)?)?$/.exec(pathname);
     if (draftRoute) {
       const id = draftRoute[1];
-      const allowed = id ? ['PATCH', 'DELETE'] : ['GET', 'HEAD', 'POST'];
+      const sending = !!draftRoute[2];
+      const allowed = sending ? ['POST'] : id ? ['PATCH', 'DELETE'] : ['GET', 'HEAD', 'POST'];
       if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
       try {
@@ -129,6 +133,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
           catch { throw Object.assign(new Error('Invalid draft JSON.'), { status: 400 }); }
         }
         if (!sendsService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
+        if (sending) return json(200, { draft: await sendsService.send(id, body, telegramService) });
         if (request.method === 'GET' || head) return json(200, { drafts: await sendsService.list() });
         if (request.method === 'POST') return json(200, { draft: await sendsService.add(body) });
         if (request.method === 'PATCH') return json(200, { draft: await sendsService.update(id, body) });
@@ -137,7 +142,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       } catch (error) {
         if ([400, 404, 409, 413].includes(error.status)) return json(error.status, { message: error.message });
         const missing = error.code === 'DB_NOT_CONFIGURED';
-        return json(missing ? 503 : 502, { message: missing ? 'Sends storage is not configured yet.' : 'Unable to save or load Sends. Please try again.' });
+        return json(missing ? 503 : 502, { message: missing ? 'Sends storage is not configured yet.' : sending ? 'Unable to confirm delivery. Refresh Sends and check the partner chats before retrying.' : 'Unable to save or load Sends. Please try again.' });
       }
     }
     if (!['GET', 'HEAD'].includes(request.method)) {
@@ -197,17 +202,26 @@ if (require.main === module) {
     const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
     const sendsService = require('./sends.cjs').createSendsService();
     const telegramService = require('./telegram.cjs').createTelegramService();
+    const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, sendsService, telegramService,
+      upcomingGamesService, sendsService, telegramService, telegramReceiver,
     });
     const port = Number(process.env.PORT || 8080);
-    http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
+    const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
       console.log(`Betting Hub listening on port ${port}; authentication required.`);
+      telegramReceiver.start();
     });
+    async function shutdown() {
+      server.close();
+      await telegramReceiver.close();
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close()]);
+    }
+    process.once('SIGTERM', () => { void shutdown(); });
+    process.once('SIGINT', () => { void shutdown(); });
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

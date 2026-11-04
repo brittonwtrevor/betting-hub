@@ -25,6 +25,8 @@ Hash-based navigation works with the password-protected production server, inclu
 - `src/App.css` and `src/index.css`: shared responsive layout and visual styles, without external CSS dependencies.
 - `server/index.cjs`: production static serving with server-side HTTP Basic authentication. Credentials come from runtime environment variables; `/healthz` exposes no app content.
 - `server/sends.cjs`: central draft persistence, merge/deduplication, market validation, and revision checks.
+- `server/telegram.cjs`: encrypted bot credentials and server-side Telegram API calls.
+- `server/telegram-receiver.cjs`: 10-second background polling, transactional raw-update persistence, durable cursors, send-ID links, and the saved inbox.
 - `src/features/bets/`: shared market catalog, game-market checklist, Sends provider and editable cards.
 - `server/lol.cjs`: read-only `TREVORFAIRS` adapter, Shiny-equivalent formatting/series calculations, and verified MySQL TLS configuration.
 - `src/features/sports/lol/`: Upcoming Games table, filters, pagination, and Eastern Time display.

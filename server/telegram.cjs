@@ -89,7 +89,7 @@ function createTelegramService({ env = process.env, createPool, fetchImpl = glob
         signal: AbortSignal.timeout(12000), redirect: 'error',
       });
       data = await response.json();
-    } catch { throw failure(method === 'sendMessage' ? 'Telegram did not confirm delivery. Check the chat before retrying to avoid a duplicate message.' : 'Unable to reach Telegram. Please try again.', 502); }
+    } catch { throw Object.assign(failure(method === 'sendMessage' ? 'Telegram did not confirm delivery. Check the chat before retrying to avoid a duplicate message.' : 'Unable to reach Telegram. Please try again.', 502), { deliveryUncertain: method === 'sendMessage' }); }
     if (!response.ok || data?.ok !== true) {
       const code = data?.error_code || response.status;
       if (code === 401 || code === 404) throw failure('Telegram rejected the bot token. Check the token from BotFather.', 400);
@@ -122,14 +122,16 @@ function createTelegramService({ env = process.env, createPool, fetchImpl = glob
       return publicConfig(config);
     },
     async testConnection() { return inspect(await required()); },
-    async readUpdates() {
+    async receiveUpdates({ botId, offset } = {}) {
       const config = await required();
-      const status = await inspect(config);
-      if (status.webhookActive) throw failure('This bot already has a webhook. Pending updates cannot be read here until that integration is changed. Your webhook has been left in place.', 409);
-      // No offset or allowed_updates: preview pending updates without acknowledging them or changing subscriptions.
-      const updates = await call(config.token, 'getUpdates', { timeout: 0, limit: 100 });
-      const messages = updates.flatMap(update => ['message', 'edited_message', 'channel_post', 'edited_channel_post'].filter(kind => update[kind]).map(kind => messageView(update[kind], update.update_id, kind)));
-      return { messages, updateCount: updates.length, fetchedAt: now().toISOString() };
+      if (String(config.bot.id) !== String(botId)) throw failure('The Telegram bot changed. Receiving will resume with the saved bot on the next poll.', 409);
+      const webhook = await call(config.token, 'getWebhookInfo');
+      if (webhook.url) throw failure('This bot already has a webhook. Remove it from the previous integration before enabling polling. The webhook has been left in place.', 409);
+      return call(config.token, 'getUpdates', {
+        timeout: 0, limit: 100,
+        ...(offset == null ? {} : { offset }),
+        allowed_updates: ['message', 'edited_message', 'channel_post', 'edited_channel_post'],
+      });
     },
     async sendMessage(input) {
       if (!input || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 4096) throw failure('Enter a message between 1 and 4,096 characters.');

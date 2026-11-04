@@ -166,3 +166,22 @@ test('draft failures preserve useful validation errors and never expose database
   assert.equal(result.status, 502);
   assert.doesNotMatch(result.body, /private-host|secret/);
 });
+
+test('card send endpoint requires authenticated same-site JSON POST and passes only through Sends', async () => {
+  const calls = [];
+  const telegramService = {};
+  const useHandler = createHandler({ ...credentials, directory, telegramService, sendsService: {
+    async send(id, input, telegram) { calls.push({ id, input, telegram }); return { id, deliveries: [] }; },
+  } });
+  const options = { useHandler, authorization: auth, method: 'POST', headers: { 'content-type': 'application/json', 'x-betting-hub': 'sends' }, body: { revision: 2 } };
+  const url = '/api/send-drafts/draft-1/send';
+  assert.equal((await request(url, { ...options, authorization: undefined })).status, 401);
+  assert.equal((await request(url, { ...options, method: 'GET' })).status, 405);
+  assert.equal((await request(url, { ...options, method: 'PATCH' })).status, 405);
+  assert.equal((await request(url, { ...options, headers: { ...options.headers, 'sec-fetch-site': 'cross-site' } })).status, 403);
+  assert.equal(calls.length, 0);
+  const result = await request(url, options);
+  assert.equal(result.status, 200);
+  assert.deepEqual(calls, [{ id: 'draft-1', input: { revision: 2 }, telegram: telegramService }]);
+  assert.deepEqual(JSON.parse(result.body), { draft: { id: 'draft-1', deliveries: [] } });
+});

@@ -21,11 +21,16 @@ beforeEach(() => {
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/lol/upcoming-games') return response({ games: [game], columns, source: { updatedAt: '2026-11-04 12:00:00' } });
     const body = options.body && JSON.parse(options.body);
+    if (url.endsWith('/send')) {
+      if (failSave) return response({ message: 'Unable to confirm delivery. Check the partner chat.' }, false);
+      saved = [{ ...body, revision: body.revision + 2, deliveries: [{ key: 'delivery-1', name: 'Sam', channel: '-100123', status: 'sent', sentAt: '2026-11-04T19:00:00Z' }] }];
+      return response({ draft: saved[0] });
+    }
     if (options.method === 'POST') {
       if (failSave) return response({ message: 'Storage unavailable. Try again.' }, false);
       const markets = allMarkets(body.game).filter(market => body.marketIds.includes(market.id)).map(market => ({ ...market, line: market.line || '', playTo: '' }));
       const existing = saved[0];
-      saved = [{ ...(existing || { id: 'draft-1', game: body.game, markets: [], recipients: [], notes: '', revision: 0 }), revision: (existing?.revision || 0) + 1, markets: [...(existing?.markets || []), ...markets.filter(market => !existing?.markets.some(old => old.id === market.id))] }];
+      saved = [{ ...(existing || { id: 'draft-1', betId: 'ALP145', game: body.game, markets: [], recipients: [], notes: '', revision: 0 }), revision: (existing?.revision || 0) + 1, markets: [...(existing?.markets || []), ...markets.filter(market => !existing?.markets.some(old => old.id === market.id))] }];
       return response({ draft: saved[0] });
     }
     if (options.method === 'PATCH') {
@@ -54,6 +59,7 @@ test('selects markets, edits independent play-to prices and total lines, and per
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
   const card = await screen.findByRole('article', { name: 'Alpha vs Bravo' });
+  expect(within(card).getByLabelText('Bet ID ALP145')).toHaveTextContent('ALP145');
   expect(screen.getByRole('tab', { name: 'Sends' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByRole('tab', { name: 'Confirms' })).toBeDisabled();
   await user.type(within(card).getByLabelText('Play-to price for Alpha ML'), '-160');
@@ -73,6 +79,7 @@ test('selects markets, edits independent play-to prices and total lines, and per
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
   await screen.findByLabelText('Play-to price for Bravo Map 1');
   expect(screen.getAllByRole('article')).toHaveLength(1);
+  expect(screen.getByLabelText('Bet ID ALP145')).toBeInTheDocument();
   expect(screen.getByLabelText('Play-to price for Alpha ML')).toHaveValue('-160');
   expect(screen.getByLabelText('Line for Kill total over · Map 1')).toHaveValue('25.5');
   await user.click(screen.getByRole('button', { name: 'Remove card' }));
@@ -94,4 +101,38 @@ test('failed saves keep market selection open for retry and do not create a draf
   await user.click(screen.getByRole('button', { name: 'Add to Sends' }));
   await screen.findByText('Markets saved to Sends.');
   expect(saved[0].markets).toHaveLength(1);
+});
+
+test('send button saves current fields, reports delivery and keeps failed edits available', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Select markets for Alpha vs Bravo' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Alpha ML' }));
+  await user.click(screen.getByRole('button', { name: 'Add to Sends' }));
+  await screen.findByText('Markets saved to Sends.');
+  await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
+  const card = await screen.findByRole('article', { name: 'Alpha vs Bravo' });
+  const send = within(card).getByRole('button', { name: 'Send to Telegram' });
+  expect(send).toBeDisabled();
+  const rows = within(card).getAllByRole('row');
+  expect(rows[rows.length - 1]).toHaveTextContent('Notes');
+  await user.type(within(card).getByLabelText('Play-to price for Alpha ML'), '+150');
+  await user.type(within(card).getByLabelText('Notes'), 'Line might move');
+  await user.click(within(card).getByRole('checkbox', { name: /Sam/ }));
+  expect(send).toBeEnabled();
+  failSave = true;
+  await user.click(send);
+  expect(await within(card).findByRole('alert')).toHaveTextContent('Unable to confirm delivery');
+  expect(within(card).getByLabelText('Notes')).toHaveValue('Line might move');
+  expect(within(card).getByRole('button', { name: 'Save changes' })).toBeEnabled();
+  failSave = false;
+  await user.click(send);
+  await within(card).findByText('Sent to selected Telegram channels.');
+  expect(within(card).getByRole('list', { name: 'Telegram delivery status' })).toHaveTextContent('Sam (-100123) · Sent');
+  expect(saved[0].notes).toBe('Line might move');
+  expect(saved[0].markets[0].playTo).toBe('+150');
+  const requests = fetch.mock.calls.filter(([url]) => url.endsWith('/send'));
+  expect(requests).toHaveLength(2);
+  expect(requests[1][1].headers['X-Betting-Hub']).toBe('sends');
+  expect(within(card).getByRole('button', { name: 'Save changes' })).toBeDisabled();
 });
