@@ -19,7 +19,7 @@ function navigate(path) {
 
 test('opens Monitoring with planned connections and no invented health results', () => {
   render(<App />);
-  expect(screen.getByRole('heading', { level: 1, name: 'Monitoring' })).toBeInTheDocument();
+  expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
   expect(within(nav).getAllByRole('link')).toHaveLength(6);
   const sources = screen.getByRole('table', { name: 'Source health' });
@@ -38,7 +38,7 @@ test('supports every workspace and sports deep links, including hash navigation'
   ];
   destinations.forEach(([path, label]) => {
     navigate(path);
-    expect(screen.getByRole('heading', { level: 1, name: label })).toBeInTheDocument();
+    expect(document.title).toBe(`${label} · Betting Hub`);
   });
   ['hockey', 'lol', 'nascar'].forEach(sport => {
     navigate(`/sports/${sport}`);
@@ -69,7 +69,7 @@ test('sidebar links change workspaces and alerts open without connecting a sourc
   const user = userEvent.setup();
   render(<App />);
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
-  await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Active Bets' })).toBeInTheDocument());
+  await waitFor(() => expect(document.title).toBe('Active Bets · Betting Hub'));
   await user.click(screen.getByRole('button', { name: 'Open alerts' }));
   expect(screen.getByRole('dialog', { name: 'Alerts' })).toBeInTheDocument();
   fireEvent.keyDown(document, { key: 'Escape' });

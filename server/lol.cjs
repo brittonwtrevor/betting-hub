@@ -2,8 +2,6 @@
 // TREVORFAIRS is published by pipelines/publish/WRITEFAIRSTOAWS.R.
 const columns = [
   ['begin_at', 'Start time (ET)', 'date'], ['league', 'League'],
-  ['lineup_note', 'Lineup source', 'link'], ['islastlineup', 'Last lineup', 'number'],
-  ['game_id', 'Game ID', 'number'], ['match_id', 'Match ID', 'number'],
   ['team_a', 'Team A'], ['a', 'A logo', 'image'], ['team_b', 'Team B'], ['b', 'B logo', 'image'],
   ['map1_probability', 'XGB Map1 Probability', 'percent'], ['bo3_probability', 'BO3 Price Probability', 'percent'],
   ['xgb_map1', 'XGB Map1', 'odds'], ['ml_map1', 'ML Map1', 'odds'], ['priors_only', 'Priors Only', 'odds'],
@@ -13,6 +11,8 @@ const columns = [
   ...['a', 'b'].flatMap(team => ['adc', 'sup', 'mid', 'jun', 'top'].map(role => [`${team}_${role}`, `${team} ${role}`])),
   ['priors_pred', 'Priors prediction', 'number'], ['bot_lane_pred', 'Bot lane prediction', 'number'],
   ['central_players_pred', 'Central players prediction', 'number'], ['pred_top', 'Top prediction', 'number'],
+  ['lineup_note', 'Lineup source', 'link'], ['islastlineup', 'Last lineup', 'number'],
+  ['game_id', 'Game ID', 'number'], ['match_id', 'Match ID', 'number'],
 ].map(([key, label, type = 'text']) => ({ key, label, type }));
 
 const sourceColumns = [

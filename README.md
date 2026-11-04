@@ -8,7 +8,7 @@ A React workspace for betting operations, research, and reporting, hosted on Dig
 - **Active Bets:** open placements, confirmation tracking, and settled bets.
 - **Bet Suggestions:** opportunity queue and planned alert coverage.
 - **Sports Dashboards:** Hockey, League of Legends, and NASCAR, each with its own research views.
-- **Partner Accounting:** balances, reported bets, and payments.
+- **Partner Accounting:** All Partners overview and individual partner tabs with balances, bet reports, and payments. Select a partner tab or name in a ledger to drill in. Add partners with an optional Telegram channel username, `t.me` link (including private invite links), or negative chat ID. Select a partner to add, edit, or remove their channel later. Partner names and channel references persist in the current browser; saving them does not connect Telegram, send messages, or import bets. Bet/payment records and published balances remain awaiting connection and are never inferred from missing data.
 - **Analytics:** performance, date/sport/scope filters, breakdowns, and export placeholders.
 
 The League of Legends dashboard reads published model outputs directly from DigitalOcean MySQL. Other workspaces currently provide navigation and UI structure with unconnected sources and empty data tables.
@@ -17,7 +17,7 @@ The League of Legends dashboard reads published model outputs directly from Digi
 
 Open **Sports Dashboards → League of Legends** (`#/sports/lol`). This reproduces only the Shiny app's Upcoming Games tab, using `defaultdb.TREVORFAIRS` instead of local CSV files. The existing LoL model publisher already writes this table; the hub only reads it.
 
-The view includes all 34 Shiny columns, Team A's Map 1/BO3/BO5 prices and probabilities, totals, duration, both player lineups, league and column filters, search, sorting, and pagination (200 rows by default). The last confirmed lineup filter defaults on, matching Shiny. Selecting a row copies `match_id`, league, the original UTC start time, Team A, and Team B as a tab-separated line for Google Sheets. The visible table shows Eastern Time. Series calculations retain Shiny's assumption of the same independent map win probability throughout the series.
+The view includes all 34 Shiny columns, Team A's Map 1/BO3/BO5 prices and probabilities, totals, duration, both player lineups, league and column filters, search, sorting, and pagination (200 rows by default). The last confirmed lineup filter defaults on, matching Shiny. The visible table shows Eastern Time. Series calculations retain Shiny's assumption of the same independent map win probability throughout the series.
 
 Add these **Runtime** environment variables to the DigitalOcean web service, alongside the app authentication variables below. Keep database values server-side; do not use a `REACT_APP_` prefix.
 

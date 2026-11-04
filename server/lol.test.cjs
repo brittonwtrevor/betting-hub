@@ -16,6 +16,7 @@ const sample = {
 test('reproduces Shiny prices, series probabilities, rounding, and all 34 columns', () => {
   const result = normalizeGame(sample);
   assert.equal(columns.length, 34);
+  assert.deepEqual(columns.slice(-4).map(column => column.key), ['lineup_note', 'islastlineup', 'game_id', 'match_id']);
   assert.deepEqual(Object.keys(result).sort(), columns.map(c => c.key).sort());
   assert.equal(result.xgb_map1, -150);
   assert.equal(result.map1_probability, 60);

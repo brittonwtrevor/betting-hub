@@ -3,6 +3,7 @@ import Icon from '../../components/Icon';
 import Drawer from '../../components/Drawer';
 import { Badge, DetailList, EmptyState, InfoNote, Panel, SearchField, Segments, StatGrid } from '../../components/ui';
 import { sources } from './sources';
+import { sportDashboards } from '../sports/config';
 
 const categories = [{ value: 'all', label: 'All sources' }, { value: 'models', label: 'Models' }, { value: 'markets', label: 'Accounts' }, { value: 'messaging', label: 'Messaging' }, { value: 'partners', label: 'Partners' }];
 
@@ -31,6 +32,13 @@ export default function MonitoringPage() {
         <div className="panel-bottom-note"><Icon name="clock" size={16} /><span>Each stage will have its own timestamp.</span></div>
       </Panel>
     </div>
+    <div className="two-column">{['hockey', 'nascar'].map(sportId => {
+      const config = sportDashboards[sportId];
+      return <Panel key={sportId} title={`${config.label} data coverage`} description="The inputs behind this dashboard.">
+        <div className="sport-inputs">{config.inputs.map(input => <div key={input}><span className="status-dot" /><span>{input}</span><span className="muted">Pending</span></div>)}</div>
+        <div className="panel-padding"><DetailList items={[{ label: 'Model version', value: '—' }, { label: 'Generated', value: '—' }, { label: 'Last ingestion', value: '—' }]} /></div>
+      </Panel>;
+    })}</div>
     <div className="two-column"><Panel title="Run history" description="Recent runs, their duration, and their outcome."><EmptyState compact icon="activity" title="No runs received yet" description="Model and ingestion activity will appear here when your pipelines report back." /></Panel><Panel title="Needs attention" description="Freshness, coverage gaps, and failed updates."><EmptyState compact icon="bell" title="Waiting for the first health check" description="Late feeds and missing outputs will rise to the top once monitoring is connected." /></Panel></div>
     {selected && <Drawer title={selected.name} onClose={closeDetails}><Badge>Not connected</Badge><p className="drawer-description">{selected.detail}</p><DetailList items={[{ label: 'Coverage', value: selected.scope }, { label: 'Connection type', value: selected.type }, { label: 'Source data updated', value: 'Awaiting connection' }, { label: 'Last successful run', value: 'Awaiting connection' }, { label: 'Outputs published', value: 'Awaiting connection' }, { label: 'Hub ingestion', value: 'Awaiting connection' }, { label: 'Expected schedule', value: 'Not configured' }]} /><h3 className="drawer-section-title">Monitoring coverage</h3><ul className="coverage-list">{selected.checks.map(check => <li key={check}><span className="status-dot" />{check}</li>)}</ul><InfoNote>Connection details and freshness thresholds will be configured when this source is integrated.</InfoNote></Drawer>}
   </>;

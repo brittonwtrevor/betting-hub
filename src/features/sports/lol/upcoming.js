@@ -5,7 +5,6 @@ export function parseDate(value) {
   const date = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(text) ? text : `${text}Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 }
-
 export function easternTime(value) {
   const date = parseDate(value);
   return date ? new Intl.DateTimeFormat('en-US', {
@@ -46,11 +45,4 @@ export function sortGames(games, column, direction) {
     else result = String(av).localeCompare(String(bv), undefined, { numeric: true });
     return direction === 'asc' ? result : -result;
   });
-}
-
-// Keep the exact five-field order and source start time used by Shiny's Sheets export.
-export function rowTsv(row) {
-  return ['match_id', 'league', 'begin_at', 'team_a', 'team_b'].map(key =>
-    String(row[key] ?? '').replace(/<[^>]+>/g, '').replace(/[\t\r\n]+/g, ' ')
-  ).join('\t');
 }
