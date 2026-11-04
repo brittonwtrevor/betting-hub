@@ -2,6 +2,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
 const { normalizeFields } = require('../src/features/bets/confirmationFields');
 const { createConfirmParser, eligibleContexts, partnerFor, defaultFields } = require('./confirm-parser.cjs');
+const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, confirmSafe: true });
 const sourceId = message => createHash('sha256').update(JSON.stringify([String(message.botId), String(message.chatId), String(message.messageId)])).digest('hex');
@@ -32,6 +33,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         action VARCHAR(32) NOT NULL, actor VARCHAR(200) NOT NULL, payload JSON NOT NULL, created_at VARCHAR(24) NOT NULL,
         INDEX source_history (source_id, id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      await migrateRecords(pool);
     })().catch(error => { schema = null; throw error; });
     await schema;
     return pool;
@@ -79,10 +81,12 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
   async function insertBet(connection, source, fields, actor) {
     const id = makeId();
     const at = now().toISOString();
+    const [[origin]] = await connection.execute('SELECT * FROM hub_confirm_sources WHERE id = ? FOR UPDATE', [source]);
+    fields = { ...fields, ...recordMetadata(decode(origin.payload), fields, at) };
     await connection.execute('INSERT INTO hub_confirm_bets (id, source_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [id, source, JSON.stringify(fields), at, at]);
     await history(connection, source, id, actor === 'AI' ? 'ai_extract' : 'manual_add', null, fields, actor);
-    return { id, sourceId: source, revision: 1, ...fields };
+    return { id, sourceId: source, revision: 1, createdAt: at, updatedAt: at, ...fields };
   }
   async function runWorker() {
     let connection, locked = false;
@@ -154,21 +158,55 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
       const ids = sources.map(row => row.id);
       const [bets] = ids.length ? await db.execute(`SELECT * FROM hub_confirm_bets WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, id`, ids) : [[]];
       return { sources: sources.map(row => ({ id: row.id, revision: row.revision, status: row.status, ...decode(row.payload),
-        error: row.last_error, bets: bets.filter(bet => bet.source_id === row.id).map(bet => ({ id: bet.id, sourceId: row.id, revision: bet.revision, ...decode(bet.payload) })) })),
+        error: row.last_error, deletedBetCount: bets.filter(bet => bet.source_id === row.id && decode(bet.payload).deletedAt).length,
+        bets: bets.filter(bet => bet.source_id === row.id && !decode(bet.payload).deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
+          revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...decode(bet.payload) })) })),
       receiver, parser: { configured: parser.configured(), enabled: env.DO_INFERENCE_ENABLED !== 'false', model: parser.model(), error: workerError } };
     },
     async update(id, input, actor = 'app') {
       if (!Number.isInteger(input?.revision)) throw fail('Refresh Confirms before saving.');
-      const fields = normalizeFields(input);
-      if (!(await sendsService.findByBetIds([fields.betId])).length) throw fail('This Bet ID does not exist in Sends.');
+      let fields = normalizeFields(input);
+      const [send] = await sendsService.findByBetIds([fields.betId]);
+      if (!send) throw fail('This Bet ID does not exist in Sends.');
       return transaction(async connection => {
         const [[row]] = await connection.execute('SELECT * FROM hub_confirm_bets WHERE id = ? FOR UPDATE', [id]);
         if (!row) throw fail('This bet no longer exists. Refresh Confirms.', 404);
         if (row.revision !== input.revision) throw fail('This bet changed on another screen. Refresh Confirms before saving.', 409);
         const before = decode(row.payload);
+        if (before.deletedAt) throw fail('This bet was deleted. Refresh Confirms.', 409);
+        const at = now().toISOString();
+        const [[source]] = await connection.execute('SELECT * FROM hub_confirm_sources WHERE id = ?', [row.source_id]);
+        const metadata = recordMetadata(decode(source.payload), fields, at);
+        const game = send.context?.game;
+        // Only the bettor's display name and bet date are editable attribution.
+        const bettorName = input.bettorName === undefined ? before.bettorName : input.bettorName;
+        if (typeof bettorName !== 'string' || !bettorName.trim() || bettorName.trim().length > 200) throw fail('Enter the person who placed this bet (maximum 200 characters).');
+        const betDate = input.betDate === undefined ? before.betDate : input.betDate;
+        if (typeof betDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(betDate) || !Number.isFinite(Date.parse(`${betDate}T00:00:00Z`)) || new Date(`${betDate}T00:00:00Z`).toISOString().slice(0, 10) !== betDate) throw fail('Enter a valid bet date.');
+        const regraded = before.grade !== fields.grade || before.pl !== fields.pl || before.partialReturn !== fields.partialReturn;
+        fields = { ...before, ...fields, bettorName: bettorName.trim(), betDate,
+          // Correcting the Bet ID also corrects game metadata from that send.
+          ...(before.betId !== fields.betId ? { gameAt: game ? iso(game.begin_at) : metadata.gameAt,
+            gameId: game?.match_id || game?.game_id || metadata.gameId, sport: game?.sport || metadata.sport, league: game?.league || metadata.league } : {}),
+          gradedAt: fields.grade === 'UNGRADED' ? null : regraded ? at : before.gradedAt };
         await connection.execute('UPDATE hub_confirm_bets SET payload = ?, revision = revision + 1, updated_at = ? WHERE id = ?', [JSON.stringify(fields), now().toISOString(), id]);
         await history(connection, row.source_id, id, before.grade !== fields.grade || before.pl !== fields.pl ? 'grade' : 'edit', before, fields, actor);
-        return { id, sourceId: row.source_id, revision: row.revision + 1, ...fields };
+        return { id, sourceId: row.source_id, revision: row.revision + 1, createdAt: row.created_at, updatedAt: at, ...fields };
+      });
+    },
+    async remove(id, input, actor = 'app') {
+      if (!Number.isInteger(input?.revision)) throw fail('Refresh Confirms before deleting.');
+      return transaction(async connection => {
+        const [[row]] = await connection.execute('SELECT * FROM hub_confirm_bets WHERE id = ? FOR UPDATE', [id]);
+        if (!row) throw fail('This bet no longer exists. Refresh Confirms.', 404);
+        if (row.revision !== input.revision) throw fail('This bet changed on another screen. Refresh Confirms before deleting.', 409);
+        const before = decode(row.payload);
+        if (before.deletedAt) throw fail('This bet was already deleted. Refresh Confirms.', 409);
+        const at = now().toISOString();
+        const after = { ...before, deletedAt: at };
+        await connection.execute('UPDATE hub_confirm_bets SET payload = ?, revision = revision + 1, updated_at = ? WHERE id = ?', [JSON.stringify(after), at, id]);
+        await history(connection, row.source_id, id, 'delete', before, after, actor);
+        return { id, sourceId: row.source_id, revision: row.revision + 1, deletedAt: at };
       });
     },
     async addManual(id, input, actor = 'app') {

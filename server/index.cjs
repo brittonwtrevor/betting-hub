@@ -112,7 +112,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
     const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
     if (confirmRoute) {
       const [, sourceId, action, betId] = confirmRoute;
-      const allowed = sourceId ? ['POST'] : betId ? ['PATCH'] : ['GET', 'HEAD'];
+      const allowed = sourceId ? ['POST'] : betId ? ['PATCH', 'DELETE'] : ['GET', 'HEAD'];
       if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
       try {
@@ -131,7 +131,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
           catch { return json(400, { message: 'Invalid confirmation JSON.' }); }
         }
         if (!confirmsService) return json(503, { message: 'Confirms storage is not configured yet.' });
-        if (betId) return json(200, { bet: await confirmsService.update(betId, body, username) });
+        if (betId) return json(200, { bet: await (request.method === 'DELETE' ? confirmsService.remove(betId, body, username) : confirmsService.update(betId, body, username)) });
         if (action === 'manual') return json(200, { bet: await confirmsService.addManual(sourceId, body, username) });
         if (action === 'retry') return json(200, await confirmsService.retry(sourceId, body));
         return json(200, await confirmsService.list());

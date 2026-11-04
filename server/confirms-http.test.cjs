@@ -40,3 +40,17 @@ test('routes manual additions and retries by source ID and keeps errors sanitize
   const failed = fixture({ async list() { throw new Error('private-host password=secret'); } });
   assert.doesNotMatch((await failed('/api/confirms')).body, /private-host|secret/);
 });
+
+test('deletion requires the same authenticated same-site JSON protections and passes the saved revision', async () => {
+  const calls = [];
+  const request = fixture({ async remove(...args) { calls.push(args); return { id: args[0], deletedAt: 'now' }; } });
+  const url = '/api/confirms/bets/bet-1';
+  const options = { method: 'DELETE', body: { revision: 3 } };
+  for (const [headers, expected] of [[{ authorization: '' }, 401], [{ 'x-forwarded-proto': 'http' }, 426],
+    [{ 'x-betting-hub': '' }, 403], [{ 'sec-fetch-site': 'cross-site' }, 403], [{ 'content-type': 'text/plain' }, 415]]) {
+    assert.equal((await request(url, { ...options, headers })).status, expected);
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await request(url, options)).status, 200);
+  assert.deepEqual(calls, [['bet-1', { revision: 3 }, 'test-user']]);
+});

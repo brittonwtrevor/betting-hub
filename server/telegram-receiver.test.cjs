@@ -203,6 +203,8 @@ test('saved inbox reads durable messages and polling status without making a Tel
   assert.deepEqual(inbox.messages[0].betIds, ['BOS145']);
   assert.equal(inbox.messages[0].chat, 'trevor_partner');
   assert.equal(inbox.messages[0].botId, '123456789');
+  assert.equal(inbox.messages[0].senderId, '123');
+  assert.equal(inbox.messages[0].senderUsername, 'trevor');
   assert.equal(inbox.messages[0].contexts[0].betId, 'BOS145');
   assert.equal(inbox.messages[0].contexts[0].context.game.team_a, 'Boston');
   assert.equal(inbox.receiver.lastPolledAt, date);

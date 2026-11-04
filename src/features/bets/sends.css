@@ -50,10 +50,12 @@
 .confirmation-raw { padding: 0 16px 12px; font-size: 11px; color: var(--muted); }
 .confirmation-raw summary { cursor: pointer; }
 .confirmation-raw p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; margin-top: 10px; }
-.confirmation-fields { min-width: 1320px; }
+.confirmation-fields { min-width: 1980px; }
 .confirmation-fields input, .confirmation-fields select { width: 100%; min-width: 75px; border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: inherit; background: var(--paper); color: inherit; }
-.confirmation-fields td:nth-child(2) { min-width: 210px; }
-.confirmation-fields td:nth-child(3), .confirmation-fields td:nth-child(4) { min-width: 170px; }
+.confirmation-fields .confirmation-game { min-width: 210px; }
+.confirmation-fields td:nth-child(2), .confirmation-fields td:nth-child(3), .confirmation-fields td:nth-child(4), .confirmation-fields td:nth-child(6), .confirmation-fields td:nth-child(7) { min-width: 170px; }
+.confirmation-actions { min-width: 220px; }
+.confirmation-actions .button { margin: 0 5px 5px 0; }
 .confirmation-fields small { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
 .confirm-profit { color: #24754c; }
 .confirm-loss { color: #a52d38; }

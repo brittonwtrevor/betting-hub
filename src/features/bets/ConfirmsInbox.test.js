@@ -6,7 +6,9 @@ import { normalizeFields } from './confirmationFields';
 
 const reply = { botId: '1', updateId: 42, messageId: 10, kind: 'message', chat: 'trevor_partner', from: 'TrevorBRedSox', chatId: '-5550868176', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], date: '2026-11-04T18:17:00.000Z' };
 const id = 'a'.repeat(64);
-const base = { id: 'bet-1', sourceId: id, revision: 1, ...normalizeFields({ betId: 'HAN187', game: 'Hanwha Life Esports vs Bilibili Gaming', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110, grade: 'UNGRADED' }) };
+const base = { id: 'bet-1', sourceId: id, revision: 1, partnerId: 'trevor', partnerName: 'Trevor', bettorName: 'Trevor Britton',
+  betDate: '2026-11-04', betAt: reply.date, gameAt: '2026-11-05T00:00:00.000Z', telegramSenderId: '123', telegramSenderUsername: 'TrevorBRedSox',
+  ...normalizeFields({ betId: 'HAN187', game: 'Hanwha Life Esports vs Bilibili Gaming', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110, grade: 'UNGRADED' }) };
 const response = (value, ok = true) => ({ ok, json: async () => value });
 let stored;
 beforeEach(() => {
@@ -17,8 +19,12 @@ beforeEach(() => {
     if (url === '/api/send-drafts') return response({ drafts: [] });
     if (options.method === 'PATCH') {
       const input = JSON.parse(options.body);
-      const bet = { id: input.id, sourceId: id, revision: input.revision + 1, ...normalizeFields(input) };
+      const bet = { ...input, sourceId: id, revision: input.revision + 1, ...normalizeFields(input) };
       stored.sources[0].bets = [bet]; return response({ bet });
+    }
+    if (options.method === 'DELETE') {
+      stored.sources[0].bets = []; stored.sources[0].deletedBetCount = 1;
+      return response({ bet: { id: base.id, deletedAt: new Date().toISOString() } });
     }
     if (url.endsWith('/manual')) {
       const bet = { ...base, id: 'bet-2', risk: null, odds: null, complete: false };
@@ -26,6 +32,46 @@ beforeEach(() => {
     }
     return response(JSON.parse(JSON.stringify(stored)));
   });
+});
+
+test('shows partner, sender and dates and saves bettor/date corrections on the current bet', async () => {
+  render(<ConfirmsInbox />); await screen.findByLabelText('Bettor for bet-1');
+  expect(screen.getByLabelText('Bettor for bet-1')).toHaveValue('Trevor Britton');
+  expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveValue('2026-11-04');
+  expect(screen.getByText('Sender: @TrevorBRedSox · 123')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Bettor for bet-1'), { target: { value: 'Luke' } });
+  fireEvent.change(screen.getByLabelText('Bet date (ET) for bet-1'), { target: { value: '2026-11-03' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(stored.sources[0].bets[0]).toMatchObject({ id: base.id, bettorName: 'Luke', betDate: '2026-11-03', partnerId: 'trevor' }));
+});
+
+test('deletion can be cancelled, removes only the selected bet, and polling does not restore it', async () => {
+  jest.useFakeTimers();
+  await act(async () => { render(<ConfirmsInbox />); });
+  fireEvent.click(screen.getByRole('button', { name: 'Delete bet' }));
+  expect(screen.getByText(/Delete HAN187/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel delete' }));
+  expect(fetch.mock.calls.some(([, options]) => options.method === 'DELETE')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete bet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+  await act(async () => {});
+  expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument();
+  expect(screen.getByText(/1 deleted bet/)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry AI' })).not.toBeInTheDocument();
+  expect(fetch).toHaveBeenCalledWith('/api/confirms/bets/bet-1', expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ revision: 1 }) }));
+  // An older in-flight refresh must not resurrect a row just deleted locally.
+  stored.sources[0].bets = [{ ...base }];
+  await act(async () => { jest.advanceTimersByTime(10000); });
+  expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument();
+});
+
+test('a failed delete keeps the saved bet visible with an error', async () => {
+  render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
+  fireEvent.click(screen.getByRole('button', { name: 'Delete bet' }));
+  fetch.mockResolvedValueOnce(response({ message: 'This bet changed on another screen.' }, false));
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('changed on another screen');
+  expect(screen.getByLabelText('Bet ID for bet-1')).toBeInTheDocument();
 });
 afterEach(() => { delete global.fetch; jest.useRealTimers(); });
 

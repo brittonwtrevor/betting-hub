@@ -175,6 +175,9 @@ function createTelegramReceiver({ telegramService, sendsService, env = process.e
           date: message.date ? new Date(message.date * 1000).toISOString() : null,
           chatId: String(row.chat_id), chatUsername: message.chat?.username || '', chat: message.chat?.title || message.chat?.username || message.chat?.first_name || 'Unknown chat',
           from: message.from?.username || [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.sender_chat?.title || '',
+          senderId: message.from?.id == null ? null : String(message.from.id),
+          senderName: message.from ? [message.from.first_name, message.from.last_name].filter(Boolean).join(' ') : '',
+          senderUsername: message.from?.username || '',
           text: row.raw_text, hasMedia: !message.text && !!(message.photo || message.document || message.video || message.voice || message.audio || message.sticker),
           candidateBetIds: parseJson(row.candidate_bet_ids), betIds: parseJson(row.matched_bet_ids), contexts: parseJson(row.send_contexts) || [], receivedAt: row.received_at,
         };

@@ -2,9 +2,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createConfirmsService, sourceId } = require('./confirms.cjs');
 const { validateExtraction } = require('./confirm-parser.cjs');
+const { columns } = require('./confirm-record.cjs');
 const copy = value => structuredClone(value);
-const context = { game: { team_a: 'Hanwha Life Esports', team_b: 'Bilibili Gaming' }, markets: [{ id: 'a:ml', label: 'HLE ML' }], recipients: [{ id: 'trevor', name: 'Trevor', telegramChannel: '-5550868176' }] };
+const context = { game: { team_a: 'Hanwha Life Esports', team_b: 'Bilibili Gaming', begin_at: '2026-11-05 00:00:00', sport: 'lol', league: 'Worlds', match_id: '123' }, markets: [{ id: 'a:ml', label: 'HLE ML' }], recipients: [{ id: 'trevor', name: 'Trevor', telegramChannel: '-5550868176' }] };
 const original = { botId: '1', chatId: '-5550868176', chat: 'trevor_partner', from: 'Trevor', messageId: 10, updateId: 42,
+  senderId: '12345', senderName: 'Trevor Britton', senderUsername: 'TrevorBRedSox',
   receivedAt: '2026-11-04T18:17:00.000Z', date: '2026-11-04T18:17:00.000Z', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], contexts: [{ betId: 'HAN187', context }] };
 const extraction = { bets: [{ betId: 'HAN187', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110 }], issues: [] };
 function fixture(options = {}) {
@@ -21,6 +23,9 @@ function fixture(options = {}) {
     if (failure?.(sql)) throw new Error('private-host password=secret');
     if (sql.includes('GET_LOCK')) return [[{ acquired: options.acquired ?? 1 }]];
     if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
+    if (sql.startsWith('SHOW COLUMNS')) return [Object.keys(columns).map(Field => ({ Field }))];
+    if (sql.startsWith('SHOW INDEX')) return [[{ Key_name: 'partner_bet_dates' }, { Key_name: 'sender_bet_dates' }]];
+    if (sql.startsWith('SELECT b.id')) return [[]];
     if (sql.startsWith('INSERT INTO hub_confirm_sources')) {
       const [id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at] = p;
       data.sources[id] ||= { id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at, revision: 1, status: 'pending', attempts: 0, retry_at_ms: 0, lease_until_ms: 0 };
@@ -59,7 +64,7 @@ function fixture(options = {}) {
   }
   const pool = { execute, query: execute, async end() {}, async getConnection() {
     let snapshot;
-    return { execute, async beginTransaction() { snapshot = copy(data); }, async commit() { snapshot = null; }, async rollback() { if (snapshot) data = snapshot; }, release() {}, destroy() {} };
+    return { execute, query: execute, async beginTransaction() { snapshot = copy(data); }, async commit() { snapshot = null; }, async rollback() { if (snapshot) data = snapshot; }, release() {}, destroy() {} };
   } };
   const telegramReceiver = { async readInbox({ forParsing }) {
     assert.equal(forParsing, true);
@@ -88,11 +93,65 @@ test('imports, parses, and persists multiple bets once across repeated reads and
   assert.equal(sources[0].partner.id, 'trevor');
   assert.equal(sources[0].message.text, original.text);
   assert.equal(sources[0].bets[0].risk, 1);
+  assert.equal(sources[0].bets[0].partnerId, 'trevor');
+  assert.equal(sources[0].bets[0].bettorName, 'Trevor Britton');
+  assert.equal(sources[0].bets[0].telegramSenderId, '12345');
+  assert.equal(sources[0].bets[0].betDate, '2026-11-04');
+  assert.equal(sources[0].bets[0].gameAt, '2026-11-05T00:00:00.000Z');
+  assert.equal(sources[0].bets[0].createdAt, '2026-11-04T18:18:00.000Z');
   assert.equal(f.data.audit.length, 2);
   await f.service.tick();
   await f.makeService().tick();
   assert.equal(f.parseCalls, 1);
   assert.equal(Object.keys(f.data.bets).length, 2);
+});
+
+test('attribution edits persist in the same row while source identity remains server controlled', async () => {
+  const f = fixture(); await f.service.tick();
+  const initial = (await f.service.list()).sources[0].bets[0];
+  f.setTime('2026-11-05T18:20:00.000Z');
+  const edited = await f.service.update(initial.id, { ...initial, bettorName: 'Luke', betDate: '2026-11-03',
+    partnerId: 'forged', telegramSenderId: 'forged', grade: 'WIN' });
+  assert.equal(Object.keys(f.data.bets).length, 1);
+  assert.equal(edited.bettorName, 'Luke');
+  assert.equal(edited.partnerId, 'trevor');
+  assert.equal(edited.telegramSenderId, '12345');
+  assert.equal(edited.betDate, '2026-11-03');
+  assert.equal(edited.gradedAt, '2026-11-05T18:20:00.000Z');
+  f.setTime('2026-11-06T18:20:00.000Z');
+  const renamed = await f.service.update(initial.id, { ...edited, bettorName: 'Luke B' });
+  assert.equal(renamed.gradedAt, edited.gradedAt);
+  const ungraded = await f.service.update(initial.id, { ...renamed, grade: 'UNGRADED' });
+  assert.equal(ungraded.gradedAt, null);
+  for (const changes of [{ bettorName: '' }, { betDate: '2026-02-30' }]) {
+    await assert.rejects(f.service.update(initial.id, { ...ungraded, ...changes }), error => error.status === 400);
+  }
+});
+
+test('deleting updates the current row and audit, survives restart and Telegram edits, and cannot be re-extracted', async () => {
+  const f = fixture(); await f.service.tick();
+  const source = (await f.service.list()).sources[0];
+  const initial = source.bets[0];
+  const graded = await f.service.update(initial.id, { ...initial, grade: 'WIN' });
+  await assert.rejects(f.service.remove(initial.id, initial), error => error.status === 409);
+  f.setFailure(sql => sql.startsWith('INSERT INTO hub_confirm_history'));
+  await assert.rejects(f.service.remove(graded.id, graded));
+  assert.equal(JSON.parse(f.data.bets[graded.id].payload).deletedAt, null);
+  f.setFailure(null);
+  await f.service.remove(graded.id, graded, 'trevor');
+  const persisted = JSON.parse(f.data.bets[graded.id].payload);
+  assert.ok(persisted.deletedAt);
+  assert.equal(persisted.pl, 0.91);
+  assert.equal(f.data.audit.at(-1)[2], 'delete');
+  await f.makeService().tick();
+  f.setMessages([{ ...original, updateId: 43, receivedAt: '2026-11-04T18:30:00.000Z' }]);
+  await f.service.tick();
+  const after = (await f.service.list()).sources[0];
+  assert.equal(after.bets.length, 0);
+  assert.equal(after.deletedBetCount, 1);
+  assert.equal(f.parseCalls, 1);
+  await assert.rejects(f.service.retry(after.id, { revision: after.revision }), /will not replace/);
+  await assert.rejects(f.service.update(graded.id, { ...graded, revision: graded.revision + 1 }), /deleted/);
 });
 
 test('editing all six fields and grading persists computed P/L with before/after history and rejects stale revisions', async () => {
