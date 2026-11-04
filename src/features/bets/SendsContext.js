@@ -17,7 +17,7 @@ export function SendsProvider({ children }) {
   const [game, setGame] = useState(null);
   const [notice, setNotice] = useState('');
   const closeGame = useCallback(() => setGame(null), []);
-  const openGame = useCallback(value => { setGame({ ...value, sport: 'lol' }); setNotice(''); }, []);
+  const openGame = useCallback(value => { setGame({ ...value, sport: value.sport || 'lol' }); setNotice(''); }, []);
   const load = useCallback(async () => {
     const data = await request();
     if (!Array.isArray(data.drafts)) throw new Error('Sends returned an unreadable response.');

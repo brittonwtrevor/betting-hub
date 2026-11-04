@@ -1,6 +1,6 @@
 const { createHash, randomUUID, randomInt } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
-const { allMarkets } = require('../src/features/bets/markets');
+const { allMarkets, gameDescription } = require('../src/features/bets/markets');
 const { chatId } = require('./telegram.cjs');
 const invalid = message => Object.assign(new Error(message), { status: 400 });
 function text(value, max = 200, required = false) {
@@ -9,12 +9,23 @@ function text(value, max = 200, required = false) {
   return value.trim();
 }
 function normalizeGame(raw) {
-  if (!raw || raw.sport !== 'lol') throw invalid('Select a League of Legends game.');
-  const game = { sport: 'lol' };
+  if (!raw || !['lol', 'hockey'].includes(raw.sport)) throw invalid('Select a supported game.');
+  const game = { sport: raw.sport };
   for (const key of ['match_id', 'game_id']) game[key] = text(raw[key] == null ? '' : String(raw[key]), 100);
   if (!game.match_id && !game.game_id) throw invalid('This game has no match or game ID.');
   for (const key of ['team_a', 'team_b', 'league', 'begin_at']) game[key] = text(raw[key], 200, true);
   if (!Number.isFinite(Date.parse(game.begin_at.replace(' ', 'T')))) throw invalid('Invalid game start time.');
+  if (game.sport === 'hockey') {
+    for (const key of ['winoddsfulltime', 'away_winoddsfulltime']) game[key] = Number.isFinite(raw[key]) && Math.abs(raw[key]) >= 100 ? raw[key] : null;
+    for (const period of ['full_game', 'reg_time']) for (const direction of ['o', 'u']) for (let line = 4; line <= 8; line += 0.5) {
+      const key = `${period}_${direction}${line}`;
+      game[key] = Number.isFinite(raw[key]) && Math.abs(raw[key]) >= 100 ? raw[key] : null;
+    }
+    for (const key of ['reg_time_home_win_prob', 'reg_time_draw_prob', 'reg_time_away_win_prob']) game[key] = Number.isFinite(raw[key]) && raw[key] >= 0 && raw[key] <= 1 ? raw[key] : null;
+    for (const key of ['goalie_team', 'goalie_opp']) game[key] = text(raw[key] == null ? '' : String(raw[key]), 200);
+    game.publishedAt = text(raw.publishedAt, 100);
+    return game;
+  }
   game.series_format = ['BO1', 'BO3', 'BO5'].includes(raw.series_format) ? raw.series_format : null;
   for (const key of ['xgb_map1', 'bo3_price', 'bo5_price']) game[key] = Number.isFinite(raw[key]) && Math.abs(raw[key]) >= 100 ? raw[key] : null;
   for (const side of ['a', 'b']) for (const role of ['adc', 'sup', 'mid', 'jun', 'top']) game[`${side}_${role}`] = text(raw[`${side}_${role}`], 200);
@@ -22,6 +33,7 @@ function normalizeGame(raw) {
   return game;
 }
 function gameKey(game) {
+  if (game.sport === 'hockey') return createHash('sha256').update(JSON.stringify([game.sport, game.match_id || `game:${game.game_id}`, game.team_a, game.team_b, game.goalie_team, game.goalie_opp])).digest('hex');
   return createHash('sha256').update(JSON.stringify([game.sport, game.match_id || `game:${game.game_id}`, game.team_a, game.team_b, ...['a', 'b'].flatMap(side => ['adc', 'sup', 'mid', 'jun', 'top'].map(role => game[`${side}_${role}`]))])).digest('hex');
 }
 function chooseMarkets(game, ids) {
@@ -29,7 +41,7 @@ function chooseMarkets(game, ids) {
   const catalog = new Map(allMarkets(game).filter(market => market.available).map(market => [market.id, market]));
   return [...new Set(ids)].map(id => {
     const market = catalog.get(id);
-    if (!market) throw invalid('A selected market is unavailable for this series.');
+    if (!market) throw invalid('A selected market is unavailable for this game.');
     return { id, label: market.label, fair: market.fair ?? null, needsLine: !!market.needsLine, line: market.line || '', playTo: '' };
   });
 }
@@ -66,7 +78,7 @@ function telegramText(draft) {
   const message = [
     `Bet ID: ${draft.betId}`,
     `${draft.game.team_a} vs ${draft.game.team_b}`,
-    `League of Legends · ${draft.game.league} · ${draft.game.series_format || 'Format unknown'} · ${when}`,
+    `${gameDescription(draft.game)} · ${when}`,
     '',
     ...draft.markets.map(market => `• ${market.label}${market.needsLine ? ` ${market.line}` : ''} · Play to ${Number(market.playTo) > 0 ? '+' : ''}${Number(market.playTo)}`),
     ...(draft.notes ? ['', `Notes: ${draft.notes}`] : []),

@@ -3,7 +3,7 @@ import { EmptyState, Panel } from '../../components/ui';
 import { easternTime } from '../sports/lol/upcoming';
 import { usePartners } from '../partners/usePartners';
 import { useSends } from './SendsContext';
-import { formatOdds } from './markets';
+import { formatOdds, gameDescription } from './markets';
 import ConfirmsInbox from './ConfirmsInbox';
 
 function SendCard({ draft, registeredPartners, partnersReady, onSave, onSend, onRemove }) {
@@ -42,7 +42,7 @@ function SendCard({ draft, registeredPartners, partnersReady, onSave, onSend, on
     finally { setBusy(false); setSending(false); }
   }
   return <article className="send-card" aria-label={matchup}>
-    <div className="send-card-header"><div><h2>{matchup}{draft.betId && <span className="send-bet-id" aria-label={`Bet ID ${draft.betId}`}>{draft.betId}</span>}</h2><p>League of Legends · {draft.game.league} · {draft.game.series_format || 'Format unknown'} · {easternTime(draft.game.begin_at)}</p></div><button type="button" className="button button-secondary" disabled={busy} onClick={remove}>Remove card</button></div>
+    <div className="send-card-header"><div><h2>{matchup}{draft.betId && <span className="send-bet-id" aria-label={`Bet ID ${draft.betId}`}>{draft.betId}</span>}</h2><p>{gameDescription(draft.game)} · {easternTime(draft.game.begin_at)}</p></div><button type="button" className="button button-secondary" disabled={busy} onClick={remove}>Remove card</button></div>
     <form onSubmit={save}>
       <div className="table-scroll"><table className="data-table send-markets" aria-label={`${matchup} markets`}><thead><tr><th>Market</th><th>Total / Line</th><th>Model fair</th><th>Play-to price (American)</th><th><span className="sr-only">Remove market</span></th></tr></thead><tbody>
         {edited.markets.map(market => <tr key={market.id}><td>{market.label}</td><td>{market.needsLine ? <input aria-label={`Line for ${market.label}`} inputMode="decimal" maxLength={16} value={market.line} disabled={busy} onChange={event => editMarket(market.id, 'line', event.target.value)} placeholder="Total" /> : market.line || '—'}</td><td>{formatOdds(market.fair)}</td><td><input aria-label={`Play-to price for ${market.label}`} inputMode="text" maxLength={16} value={market.playTo} disabled={busy} onChange={event => editMarket(market.id, 'playTo', event.target.value)} placeholder="+120 or -110" /></td><td><button type="button" className="icon-button" aria-label={`Remove ${market.label}`} disabled={busy || edited.markets.length === 1} onClick={() => change({ ...edited, markets: edited.markets.filter(item => item.id !== market.id) })}>×</button></td></tr>)}

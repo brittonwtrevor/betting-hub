@@ -3,10 +3,12 @@ import Icon from '../../../components/Icon';
 import { Badge, EmptyState, Panel, SearchField, SelectField } from '../../../components/ui';
 import { easternTime } from '../lol/upcoming';
 import { cellText, filterGames, sortFutureGames } from './futureGames';
+import { useSends } from '../../bets/SendsContext';
 import '../lol/lol.css';
 import './hockey.css';
 
 export default function HockeyFutureGames() {
+  const { openGame } = useSends();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -48,6 +50,11 @@ export default function HockeyFutureGames() {
   const pageRows = visible.slice(currentPage * Number(pageSize), (currentPage + 1) * Number(pageSize));
   const gameCount = useMemo(() => new Set(visible.map(row => row.id)).size, [visible]);
 
+  const selectGame = row => openGame({
+    ...row, sport: 'hockey', game_id: row.id, team_a: row.homeTeamName, team_b: row.visitingTeamName,
+    league: row.leagueName, begin_at: row.dateTime, publishedAt: data?.source?.updatedAt || '',
+  });
+
   return <Panel title="Future Games" description="Model prices, sportsbook odds, and goalie scenarios.">
     <div className="panel-controls lol-controls hockey-controls">
       <div className="filter-row">
@@ -75,7 +82,7 @@ export default function HockeyFutureGames() {
             <table className="data-table lol-table hockey-table"><thead>
               <tr>{data.columns.map(column => <th key={column.key} scope="col" aria-sort={sort.key === column.key ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'}><button onClick={() => setSort(current => ({ key: column.key, direction: current.key === column.key && current.direction === 'asc' ? 'desc' : 'asc' }))}>{column.label}{sort.key === column.key ? sort.direction === 'asc' ? ' ↑' : ' ↓' : ''}</button></th>)}</tr>
               <tr className="lol-column-filters">{data.columns.map(column => <th key={column.key}><input aria-label={`Filter ${column.label}`} value={selection.filters[column.key] || ''} onChange={event => change('filters', { ...selection.filters, [column.key]: event.target.value })} /></th>)}</tr>
-            </thead><tbody>{pageRows.map((row, index) => <tr key={`${currentPage}-${index}`}>{data.columns.map(column => <td key={column.key} className={`${['text', 'date'].includes(column.type) ? '' : 'lol-numeric'} ${column.type === 'edge' && row[column.key] >= 0.05 ? 'hockey-edge-strong' : column.type === 'edge' && row[column.key] >= 0.02 ? 'hockey-edge' : ''}`}>{cellText(row, column) || '—'}</td>)}</tr>)}
+            </thead><tbody>{pageRows.map((row, index) => <tr key={`${currentPage}-${index}`} className="game-select-row" onClick={event => { if (!event.target.closest('a, button, input')) selectGame(row); }}>{data.columns.map(column => <td key={column.key} className={`${['text', 'date'].includes(column.type) ? '' : 'lol-numeric'} ${column.type === 'edge' && row[column.key] >= 0.05 ? 'hockey-edge-strong' : column.type === 'edge' && row[column.key] >= 0.02 ? 'hockey-edge' : ''}`}>{column.key === 'homeTeamName' ? <button className="game-market-button" type="button" aria-label={`Select markets for ${row.homeTeamName} vs ${row.visitingTeamName}`} onClick={() => selectGame(row)}>{cellText(row, column) || '—'}</button> : cellText(row, column) || '—'}</td>)}</tr>)}
               {!visible.length && <tr><td colSpan={data.columns.length}><EmptyState icon="hockey" title="No matching games" description="Adjust your filters or refresh after the next model publication." /></td></tr>}
             </tbody></table>
           </div>

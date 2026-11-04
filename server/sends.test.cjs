@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createSendsService, normalizeGame, chooseMarkets, editDraft, gameKey, teamPrefix } = require('./sends.cjs');
+const { createSendsService, normalizeGame, chooseMarkets, editDraft, gameKey, teamPrefix, telegramText } = require('./sends.cjs');
 const { marketGroups, allMarkets } = require('../src/features/bets/markets');
 const env = { LOL_DO_DB_HOST: 'db.example', LOL_DO_DB_USER: 'reader', LOL_DO_DB_PASSWORD: 'test-only', LOL_DO_DB_NAME: 'defaultdb' };
 const game = { sport: 'lol', match_id: '11', game_id: '101', team_a: 'Alpha', team_b: 'Bravo', league: 'LCK', begin_at: '2026-11-05 19:00:00', series_format: 'BO3', xgb_map1: -150, bo3_price: -184, bo5_price: -215, a_adc: 'ADC', publishedAt: '2026-11-04 12:00:00' };
@@ -94,7 +94,7 @@ test('validates market choices, American odds, and independently editable total 
   assert.throws(() => editDraft(draft, { ...input, markets: [{ ...input.markets[1], line: '-1' }] }), /positive total/);
   assert.throws(() => editDraft(draft, { ...input, markets: [] }), /at least one/);
   assert.throws(() => editDraft(draft, { ...input, markets: [input.markets[0], input.markets[0]] }), /duplicate/);
-  assert.throws(() => normalizeGame({ ...game, sport: 'hockey' }), /League of Legends/);
+  assert.throws(() => normalizeGame({ ...game, sport: 'football' }), /supported game/);
 });
 
 test('persistent queue merges market selections without replacing saved prices or game snapshots', async () => {
@@ -265,4 +265,37 @@ test('a committed in-flight send blocks concurrent sending, editing, merging and
   await assert.rejects(service.add({ game, marketIds: ['b:ml'] }), /in progress/);
   finish();
   assert.equal((await sending).deliveries[0].status, 'sent');
+});
+
+
+test('hockey markets preserve period rules, goalie scenarios, fair prices, and persisted selections', async () => {
+  const hockey = { sport: 'hockey', game_id: 'h1', team_a: 'Boston Bruins', team_b: 'Toronto', league: 'NHL', begin_at: '2026-11-05T01:00:00+0300', goalie_team: 'Home goalie', goalie_opp: 'Away goalie', winoddsfulltime: -150, away_winoddsfulltime: 150, 'full_game_o5.5': -110, reg_time_home_win_prob: 0.45, reg_time_draw_prob: 0.25, reg_time_away_win_prob: 0.30 };
+  const normalized = normalizeGame(hockey);
+  const markets = allMarkets(normalized);
+  assert.equal(markets.length, 59);
+  assert.equal(new Set(markets.map(market => market.id)).size, 59);
+  for (const side of ['a', 'b']) for (const line of [-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5]) assert.ok(markets.some(market => market.id === `${side}:handicap:${line}`));
+  assert.equal(markets.find(market => market.id === 'match:goals:full:over:5.5').fair, -110);
+  assert.equal(markets.find(market => market.id === 'match:goals:reg:over:5.5').fair, null);
+  assert.equal(markets.find(market => market.id === 'match:1x2:draw').fair, 300);
+  assert.equal(markets.find(market => market.id === 'a:ml:reg').fair, -150);
+  assert.equal(markets.find(market => market.id === 'a:1x2').fair, 122);
+  assert.equal(chooseMarkets(normalized, markets.map(market => market.id)).length, 59);
+  assert.throws(() => chooseMarkets(normalized, ['a:map:1']), /unavailable/);
+  assert.notEqual(gameKey(normalized), gameKey(normalizeGame({ ...hockey, goalie_team: 'Another goalie' })));
+  const db = database(); let id = 0;
+  const service = createSendsService({ env, createPool: () => db.pool, makeId: () => `hockey-${++id}`, numberStart: () => 145 });
+  const first = await service.add({ game: hockey, marketIds: ['b:ml', 'match:goals:reg:under:4', 'match:1x2:draw', 'a:ml:reg'] });
+  assert.equal(first.betId, 'TOR145');
+  const saved = await service.update(first.id, { ...first, recipients: [], notes: '', markets: first.markets.map(market => ({ ...market, playTo: '+150' })) });
+  const merged = await service.add({ game: { ...hockey, away_winoddsfulltime: 180 }, marketIds: ['a:handicap:-3.5'] });
+  assert.equal(merged.id, saved.id);
+  assert.equal(merged.markets[0].fair, 150);
+  assert.equal(merged.markets[0].playTo, '+150');
+  assert.equal((await service.list())[0].game.sport, 'hockey');
+  const message = telegramText(saved);
+  assert.match(message, /Hockey · NHL/);
+  assert.match(message, /Total goals under 4 \(regulation only\)/);
+  assert.match(message, /ML \(regulation only, draw = void\)/);
+  assert.doesNotMatch(message, /League of Legends|Format unknown/);
 });

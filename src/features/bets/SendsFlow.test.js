@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import App from '../../App';
 import { allMarkets } from './markets';
 const game = { sport: 'lol', match_id: '11', game_id: '101', team_a: 'Alpha', team_b: 'Bravo', league: 'LCK', begin_at: '2026-11-05 19:00:00', series_format: 'BO3', xgb_map1: -150, bo3_price: -184, islastlineup: 1 };
+const hockey = { id: 'h1', dateTime: '2026-11-05T01:00:00+0300', leagueName: 'NHL', homeTeamName: 'Boston Bruins', visitingTeamName: 'Toronto', winoddsfulltime: -150, away_winoddsfulltime: 150, goalie_team: 'Home goalie', goalie_opp: 'Away goalie' };
 const columns = [
   { key: 'series_format', label: 'Format' }, { key: 'begin_at', label: 'Start time (ET)', type: 'date' },
   { key: 'league', label: 'League' }, { key: 'team_a', label: 'Team A' }, { key: 'team_b', label: 'Team B' },
@@ -21,6 +22,7 @@ beforeEach(() => {
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/partners/import') return response({ imported: true });
     if (url === '/api/partners') return response({ partners: [{ id: 'sam', name: 'Sam', telegramChannel: '-100123', revision: 1 }] });
+    if (url === '/api/hockey/future-games') return response({ games: [hockey], columns: [{ key: 'homeTeamName', label: 'Home', type: 'text' }, { key: 'visitingTeamName', label: 'Away', type: 'text' }], source: { updatedAt: '2026-11-04 12:00:00' } });
     if (url === '/api/lol/upcoming-games') return response({ games: [game], columns, source: { updatedAt: '2026-11-04 12:00:00' } });
     const body = options.body && JSON.parse(options.body);
     if (url.endsWith('/send')) {
@@ -137,4 +139,30 @@ test('send button saves current fields, reports delivery and keeps failed edits 
   expect(requests).toHaveLength(2);
   expect(requests[1][1].headers['X-Betting-Hub']).toBe('sends');
   expect(within(card).getByRole('button', { name: 'Save changes' })).toBeDisabled();
+});
+
+
+test('clicking a hockey row offers hockey markets and saves playable Sends with the selected scenario', async () => {
+  window.history.replaceState(null, '', '/#/sports/hockey');
+  const user = userEvent.setup();
+  render(<App />);
+  // A click on any ordinary table cell opens the same picker as the team button.
+  await user.click(await screen.findByText('Toronto'));
+  const picker = screen.getByRole('dialog', { name: 'Markets · Boston Bruins vs Toronto' });
+  expect(within(picker).getAllByRole('checkbox')).toHaveLength(59);
+  expect(within(picker).queryByText(/Map 1/)).not.toBeInTheDocument();
+  const labels = ['Boston Bruins ML (Home, incl OT/SO)', 'Toronto +3.5 goals (incl OT/SO)', 'Total goals over 4 (incl OT/SO)', 'Total goals under 4.5 (regulation only)', 'Draw (1X2, regulation only)', 'Toronto ML (regulation only, draw = void)'];
+  for (const name of labels) await user.click(within(picker).getByRole('checkbox', { name, exact: true }));
+  await user.click(within(picker).getByRole('button', { name: 'Add to Sends' }));
+  await screen.findByText('Markets saved to Sends.');
+  expect(saved[0].game).toMatchObject({ sport: 'hockey', game_id: 'h1', team_a: 'Boston Bruins', team_b: 'Toronto', goalie_team: 'Home goalie', goalie_opp: 'Away goalie' });
+  expect(saved[0].markets).toHaveLength(labels.length);
+  await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
+  const card = await screen.findByRole('article', { name: 'Boston Bruins vs Toronto' });
+  expect(within(card).getByText(/Hockey · NHL/)).toBeInTheDocument();
+  expect(within(card).queryByText(/League of Legends/)).not.toBeInTheDocument();
+  await user.type(within(card).getByLabelText(`Play-to price for ${labels[0]}`), '-160');
+  await user.click(within(card).getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(saved[0].markets[0].playTo).toBe('-160'));
+  expect(within(card).getByRole('table')).toHaveTextContent('-150');
 });

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Drawer from '../../components/Drawer';
-import { marketGroups } from './markets';
+import { gameDescription, marketGroups } from './markets';
 
 export default function MarketPicker({ game, onClose, onAdd }) {
   const [selected, setSelected] = useState([]);
@@ -14,7 +14,7 @@ export default function MarketPicker({ game, onClose, onAdd }) {
     catch (failure) { setError(failure.message); setSaving(false); }
   }
   return <Drawer title={`Markets · ${game.team_a} vs ${game.team_b}`} onClose={saving ? () => {} : onClose}>
-    <p className="market-picker-intro">{game.series_format || 'Series'} · Choose markets to add to Sends. Enter play-to prices on the draft card.</p>
+    <p className="market-picker-intro">{gameDescription(game)} · Choose markets to add to Sends. Enter play-to prices on the draft card.</p>
     <div className="market-checklists">{groups.map(group => <details key={group.id} open>
       <summary>{group.label}</summary>
       <div className="market-group-actions"><button type="button" disabled={saving} onClick={() => setSelected(current => [...new Set([...current, ...group.markets.filter(market => market.available).map(market => market.id)])])}>Select all available</button><button type="button" disabled={saving} onClick={() => setSelected(current => current.filter(id => !group.markets.some(market => market.id === id)))}>Clear</button></div>
