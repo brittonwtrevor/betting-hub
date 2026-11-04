@@ -1,55 +1,24 @@
-import React from "react";
-import logo from "./logo.svg";
-import "./App.css";
-
-/**
- * Uses Tailwind CSS for styling
- * Tailwind file is imported in App.css
- */
+import React from 'react';
+import AppShell from './app/AppShell';
+import useRoute from './app/useRoute';
+import MonitoringPage from './features/monitoring/MonitoringPage';
+import ActiveBetsPage from './features/bets/ActiveBetsPage';
+import SuggestionsPage from './features/suggestions/SuggestionsPage';
+import SportsPage from './features/sports/SportsPage';
+import PartnersPage from './features/partners/PartnersPage';
+import AnalyticsPage from './features/analytics/AnalyticsPage';
+import { EmptyState } from './components/ui';
+import './App.css';
 
 export default function App() {
-  return (
-    <div className="app min-h-screen text-blue-200 flex items-center flex-col p-20">
-      <div className="mb-10 grid grid-cols-4 grid-rows-2 w-1/2 mx-auto">
-        <img className="opacity-25" src={logo} alt="React Logo" width="300" />
-        <img
-          className="col-span-2 row-span-3 animate-spin m-auto"
-          style={{ animationDuration: "30s" }}
-          src={logo}
-          alt="React Logo"
-          width="300"
-        />
-        <img className="opacity-25" src={logo} alt="React Logo" width="300" />
-        <img className="opacity-25" src={logo} alt="React Logo" width="300" />
-        <img className="opacity-25" src={logo} alt="React Logo" width="300" />
-      </div>
-
-      <h1 className="text-2xl lg:text-5xl mb-10 text-right">
-        Welcome to Your New React App{" "}
-        <span className="block text-lg text-blue-400">on DigitalOcean</span>
-      </h1>
-
-      <div className="grid grid-cols-2 grid-rows-2 gap-4">
-        <Button
-          text="DigitalOcean Docs"
-          url="https://www.digitalocean.com/docs/app-platform"
-        />
-        <Button
-          text="DigitalOcean Dashboard"
-          url="https://cloud.digitalocean.com/apps"
-        />
-      </div>
-    </div>
-  );
-}
-
-function Button({ className, text, url = "#" }) {
-  return (
-    <a
-      href={url}
-      className={`${className} py-3 px-6 bg-purple-400 hover:bg-purple-300 text-purple-800 hover:text-purple-900 block rounded text-center shadow flex items-center justify-center leading-snug text-xs transition ease-in duration-150`}
-    >
-      {text}
-    </a>
-  );
+  const route = useRoute();
+  const pages = {
+    monitoring: <MonitoringPage />,
+    bets: <ActiveBetsPage />,
+    suggestions: <SuggestionsPage />,
+    sports: <SportsPage sportId={route.sportId} />,
+    partners: <PartnersPage />,
+    analytics: <AnalyticsPage />,
+  };
+  return <AppShell route={route}><div key={route.path} className="page-content">{pages[route.id] || <EmptyState icon="search" title="Page not found" description="Choose a workspace from the sidebar to get back on track."><a className="button button-primary" href="#/">Back to Monitoring</a></EmptyState>}</div></AppShell>;
 }

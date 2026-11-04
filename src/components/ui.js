@@ -1,0 +1,17 @@
+import React, { useId } from 'react';
+import Icon from './Icon';
+export function Badge({ children, tone = 'neutral', dot = true }) { return <span className={`badge badge-${tone}`}>{dot && <span className="status-dot" />}{children}</span>; }
+export function Panel({ title, description, action, children, className = '' }) { return <section className={`panel ${className}`}>{title && <div className="panel-header"><div><h2>{title}</h2>{description && <p>{description}</p>}</div>{action}</div>}{children}</section>; }
+export function StatGrid({ items }) { return <div className="stat-grid">{items.map(item => <div className="stat-card" key={item.label}><div className="stat-label">{item.label}<Icon name={item.icon || 'chart'} size={18} /></div><div className="stat-value">{item.value ?? '—'}{item.suffix && <span>{item.suffix}</span>}</div><div className="stat-note">{item.note || 'Awaiting connected data'}</div></div>)}</div>; }
+export function SelectField({ label, value, onChange, options }) {
+  const id = useId();
+  return <div className="select-field"><label htmlFor={id}>{label}</label><div className="select-wrap"><select id={id} value={value} onChange={event => onChange(event.target.value)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><Icon name="down" size={14} /></div></div>;
+}
+export function SearchField({ value, onChange, placeholder = 'Search…', label = 'Search' }) { return <div className="search-field"><Icon name="search" size={17} /><input type="search" aria-label={label} placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)} /></div>; }
+export function Segments({ label, items, value, onChange }) { return <div className="segments" role="group" aria-label={label}>{items.map(item => <button type="button" key={item.value} className={value === item.value ? 'segment active' : 'segment'} aria-pressed={value === item.value} onClick={() => onChange(item.value)}>{item.label}{item.count !== undefined && <span className="segment-count">{item.count}</span>}</button>)}</div>; }
+export function EmptyState({ icon = 'inbox', title, description, children, compact = false }) { return <div className={`empty-state ${compact ? 'empty-compact' : ''}`}><div className="empty-icon"><Icon name={icon} size={24} /></div><h3>{title}</h3><p>{description}</p>{children}</div>; }
+export function EmptyTable({ columns, title, description, icon, label }) { return <div className="table-scroll"><table className="data-table" aria-label={label || title}><thead><tr>{columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody><tr><td colSpan={columns.length}><EmptyState icon={icon} title={title} description={description} /></td></tr></tbody></table></div>; }
+export function InfoNote({ children }) { return <div className="info-note"><Icon name="info" size={17} /><p>{children}</p></div>; }
+export function DetailList({ items }) { return <dl className="detail-list">{items.map(item => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>; }
+export function ExportButton() { return <button type="button" className="button button-secondary" disabled title="Exports become available when bet data is connected."><Icon name="download" size={16} />Export data</button>; }
+export const sportOptions = [{ value: 'all', label: 'All sports' }, { value: 'hockey', label: 'Hockey' }, { value: 'lol', label: 'League of Legends' }, { value: 'nascar', label: 'NASCAR' }];
