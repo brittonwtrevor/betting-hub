@@ -182,7 +182,7 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
       });
     },
     async send(id, input, telegram) {
-      if (!telegram) throw invalid('Connect your bot on the Telegram page first.');
+      if (!telegram) throw invalid('Configure the Telegram bot in DigitalOcean runtime settings first.');
       // Reserve delivery in a committed transaction before contacting Telegram. The
       // fingerprint prevents repeat clicks/retries from duplicating confirmed sends.
       const prepared = await transaction(async connection => {
@@ -221,7 +221,7 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
         let outcome;
         try {
           const result = await telegram.sendMessage({ chatId: delivery.channel, text: prepared.message });
-          outcome = { status: 'sent', sentAt: now().toISOString(), messageId: result.message.messageId };
+          outcome = { status: 'sent', sentAt: now().toISOString(), messageId: result.message.messageId, ...(result.message.chatId ? { chatId: String(result.message.chatId) } : {}) };
         } catch (error) {
           outcome = { status: error.deliveryUncertain || !error.telegramSafe ? 'uncertain' : 'failed', error: error.telegramSafe ? error.message : 'Delivery could not be confirmed. Check the partner chat before sending again.' };
         }

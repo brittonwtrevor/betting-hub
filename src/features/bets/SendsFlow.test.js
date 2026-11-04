@@ -61,7 +61,7 @@ test('selects markets, edits independent play-to prices and total lines, and per
   const card = await screen.findByRole('article', { name: 'Alpha vs Bravo' });
   expect(within(card).getByLabelText('Bet ID ALP145')).toHaveTextContent('ALP145');
   expect(screen.getByRole('tab', { name: 'Sends' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.getByRole('tab', { name: 'Confirms' })).toBeDisabled();
+  expect(screen.getByRole('tab', { name: 'Confirms' })).toBeEnabled();
   await user.type(within(card).getByLabelText('Play-to price for Alpha ML'), '-160');
   await user.type(within(card).getByLabelText('Line for Kill total over · Map 1'), '25.5');
   await user.type(within(card).getByLabelText('Play-to price for Kill total over · Map 1'), '+105');

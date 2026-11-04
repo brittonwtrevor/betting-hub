@@ -76,7 +76,7 @@ function createTelegramService({ env = process.env, createPool, fetchImpl = glob
   }
   async function required() {
     const config = await load();
-    if (!config) throw failure('Save your Telegram bot token first.', 409);
+    if (!config) throw failure('Set TELEGRAM_BOT_TOKEN in DigitalOcean runtime settings first.', 409);
     return config;
   }
   async function call(token, method, body = {}) {

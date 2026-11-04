@@ -4,6 +4,7 @@ import { easternTime } from '../sports/lol/upcoming';
 import { readPartners } from '../partners/registry';
 import { useSends } from './SendsContext';
 import { formatOdds } from './markets';
+import ConfirmsInbox from './ConfirmsInbox';
 
 function SendCard({ draft, onSave, onSend, onRemove }) {
   const [edited, setEdited] = useState(draft);
@@ -53,7 +54,7 @@ function SendCard({ draft, onSave, onSend, onRemove }) {
     </form>
   </article>;
 }
-export default function ActiveBetsPage() {
+export default function ActiveBetsPage({ tab = 'sends' }) {
   const { drafts, load, save, send, remove } = useSends();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -62,12 +63,12 @@ export default function ActiveBetsPage() {
     try { await load(); } catch (failure) { setError(failure.message); }
     finally { setLoading(false); }
   }, [load]);
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { if (tab === 'sends') refresh(); }, [refresh, tab]);
   return <>
-    <div className="sends-toolbar"><div className="segments" role="tablist" aria-label="Active Bets"><button type="button" className="segment active" role="tab" aria-selected="true" aria-controls="sends-panel" id="sends-tab">Sends</button><button type="button" className="segment" role="tab" aria-selected="false" disabled title="Confirmation ingestion will be added later.">Confirms</button></div><button type="button" className="button button-secondary" onClick={refresh} disabled={loading}>{loading ? 'Loading…' : 'Refresh Sends'}</button></div>
-    <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
+    <div className="sends-toolbar"><div className="segments" role="tablist" aria-label="Active Bets">{['sends', 'confirms'].map(value => <button key={value} type="button" className={`segment${tab === value ? ' active' : ''}`} role="tab" aria-selected={tab === value} aria-controls={`${value}-panel`} id={`${value}-tab`} onClick={() => { window.location.hash = value === 'confirms' ? '/bets?tab=confirms' : '/bets'; }}>{value === 'sends' ? 'Sends' : 'Confirms'}</button>)}</div>{tab === 'sends' && <button type="button" className="button button-secondary" onClick={refresh} disabled={loading}>{loading ? 'Loading…' : 'Refresh Sends'}</button>}</div>
+    {tab === 'confirms' ? <div id="confirms-panel" role="tabpanel" aria-labelledby="confirms-tab"><ConfirmsInbox /></div> : <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
       {error && <p role="alert" className="sends-error">{error}</p>}
       {loading ? <p role="status">Loading Sends…</p> : drafts?.length ? drafts.map(draft => <SendCard key={draft.id} draft={draft} onSave={save} onSend={send} onRemove={remove} />) : !error && <Panel><EmptyState icon="inbox" title="No Sends drafts yet" description="Select a game in Sports Dashboards or Trading Dashboard, check the markets you want, and add them here." /></Panel>}
-    </div>
+    </div>}
   </>;
 }

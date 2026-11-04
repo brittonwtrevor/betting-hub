@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -109,6 +109,37 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       }
     }
 
+    const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
+    if (confirmRoute) {
+      const [, sourceId, action, betId] = confirmRoute;
+      const allowed = sourceId ? ['POST'] : betId ? ['PATCH'] : ['GET', 'HEAD'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        let body;
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          if (request.headers['x-betting-hub'] !== 'confirms' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Confirms in Betting Hub to edit or grade bets.' });
+          if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Confirms requests require JSON.' });
+          let size = 0;
+          const chunks = [];
+          for await (const chunk of request) {
+            size += Buffer.byteLength(chunk);
+            if (size > 32768) return json(413, { message: 'This confirmation request is too large.' });
+            chunks.push(Buffer.from(chunk));
+          }
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          catch { return json(400, { message: 'Invalid confirmation JSON.' }); }
+        }
+        if (!confirmsService) return json(503, { message: 'Confirms storage is not configured yet.' });
+        if (betId) return json(200, { bet: await confirmsService.update(betId, body, username) });
+        if (action === 'manual') return json(200, { bet: await confirmsService.addManual(sourceId, body, username) });
+        if (action === 'retry') return json(200, await confirmsService.retry(sourceId, body));
+        return json(200, await confirmsService.list());
+      } catch (error) {
+        if (error.confirmSafe) return json(error.status || 400, { message: error.message });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save Confirms. Please try again.' });
+      }
+    }
     const draftRoute = /^\/api\/send-drafts(?:\/([a-zA-Z0-9-]{1,36})(\/send)?)?$/.exec(pathname);
     if (draftRoute) {
       const id = draftRoute[1];
@@ -203,20 +234,23 @@ if (require.main === module) {
     const sendsService = require('./sends.cjs').createSendsService();
     const telegramService = require('./telegram.cjs').createTelegramService();
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
+    const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService });
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, sendsService, telegramService, telegramReceiver,
+      upcomingGamesService, sendsService, telegramService, telegramReceiver, confirmsService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
       console.log(`Betting Hub listening on port ${port}; authentication required.`);
       telegramReceiver.start();
+      confirmsService.start();
     });
     async function shutdown() {
       server.close();
+      await confirmsService.close();
       await telegramReceiver.close();
       await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close()]);
     }

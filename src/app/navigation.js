@@ -5,7 +5,6 @@ export const navigation = [
   { id: 'sports', path: '/sports/hockey', label: 'Sports Dashboards', icon: 'sports', description: 'The research behind your next decision.' },
   { id: 'partners', path: '/partners', label: 'Partner Accounting', icon: 'users', description: 'Bet reports, shared exposure, and balances with your partners.' },
   { id: 'analytics', path: '/analytics', label: 'Analytics', icon: 'chart', description: 'Understand your performance, from the full picture to every placement.' },
-  { id: 'telegram', path: '/telegram', label: 'Telegram', icon: 'link', description: 'Connect your bot, read pending messages, and send to your chats.' },
 ];
 export const sports = [
   { id: 'hockey', label: 'Hockey', icon: 'hockey' },

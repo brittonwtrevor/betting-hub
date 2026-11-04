@@ -22,7 +22,8 @@ test('opens Monitoring with planned connections and no invented health results',
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
-  expect(within(nav).getAllByRole('link')).toHaveLength(7);
+  expect(within(nav).getAllByRole('link')).toHaveLength(6);
+  expect(within(nav).queryByRole('link', { name: 'Telegram', exact: true })).not.toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Source health' });
   expect(within(sources).getAllByText('Not connected')).toHaveLength(7);
   expect(screen.getByText('No freshness checks have run', { exact: false })).toBeInTheDocument();

@@ -5,13 +5,13 @@ A React workspace for betting operations, research, and reporting, hosted on Dig
 ## Workspaces
 
 - **Monitoring:** planned sources, data freshness, model-to-hub delivery stages, run history, and attention items.
-- **Active Bets:** Sends draft cards with selected markets and individual play-to prices; Confirms is reserved for future placement reports.
+- **Active Bets:** Sends draft cards with selected markets and individual play-to prices; Confirms extracts partner fills, supports field corrections, and grades each bet with persisted P/L.
 - **Trading Dashboard:** the combined game list, initially backed by League of Legends, with the same market-selection workflow as Sports Dashboards.
 - **Sports Dashboards:** Hockey, League of Legends, and NASCAR, each with its own research views.
 - **Partner Accounting:** All Partners overview and individual partner tabs with balances, bet reports, and payments. Select a partner tab or name in a ledger to drill in. Add partners with an optional Telegram channel username, `t.me` link (including private invite links), or negative chat ID. Select a partner to add, edit, or remove their channel later. Partner names and channel references persist in the current browser; saving them does not connect Telegram, send messages, or import bets. Bet/payment records and published balances remain awaiting connection and are never inferred from missing data.
 - **Analytics:** performance, date/sport/scope filters, breakdowns, and export placeholders.
 
-The League of Legends dashboard reads published model outputs directly from DigitalOcean MySQL. Sends stores draft selections in the app database; financial accounts and confirmed placements remain unconnected.
+The League of Legends dashboard reads published model outputs directly from DigitalOcean MySQL. Sends and Confirms store drafts, reported fills, and grades centrally. External financial accounts, partner payment balances, and settlement imports remain unconnected.
 
 ## League of Legends: Upcoming Games
 
@@ -38,7 +38,25 @@ The connection requires TLS with certificate verification. Set `LOL_DO_DB_SSL_CA
 
 Click a LoL game row or its Team A name in Sports Dashboards or Trading Dashboard. A checklist lets you select markets separately for either team or the match: series ML, Map 1–5 winners, team kill totals over/under per map, map handicaps ±1.5/±2.5, total maps over/under, and match kill totals over/under per map. Markets outside a known series format are disabled.
 
-**Add to Sends** creates a card under **Active Bets → Sends**. Enter an American play-to price for each market and a total/line for total markets. Blank fields are allowed while drafting. Select partners/groups from Partner Accounting and add notes in the last table row. **Save changes** saves without sending. **Send to Telegram** saves current edits and sends the bet ID, matchup, start time (ET), selected markets, play-to prices, and notes to each selected partner channel using the connected bot. Prices, totals, and valid destinations are required before sending. Delivery status is persisted per destination; retries skip identical messages already delivered, and only confirmed failures can be retried automatically. Unconfirmed delivery requires checking the partner chat. Confirms stays disabled; sending a card does not place bets.
+**Add to Sends** creates a card under **Active Bets → Sends**. Enter an American play-to price for each market and a total/line for total markets. Blank fields are allowed while drafting. Select partners/groups from Partner Accounting and add notes in the last table row. **Save changes** saves without sending. **Send to Telegram** saves current edits and sends the bet ID, matchup, start time (ET), selected markets, play-to prices, and notes to each selected partner channel using the connected bot. Prices, totals, and valid destinations are required before sending. Delivery status is persisted per destination; retries skip identical messages already delivered, and only confirmed failures can be retried automatically. Unconfirmed delivery requires checking the partner chat. Sending a card does not place bets.
+
+**Active Bets → Confirms** (`#/bets?tab=confirms`) shows partner fills and refreshes every 10 seconds. Eligible replies must contain a recognized six-character send ID **and** originate in a partner chat listed in that send's archived recipients or resolved delivery chat IDs. Matching uses numeric chat IDs or public usernames, never display titles. Unrelated messages remain archived but do not appear in Confirms. Each reply retains its original raw text and originating partner; each reported fill becomes a separate row with editable **BETID, GAME, TEAM, BET, RISK, ODDS**, a grade, and P/L. Search includes those fields, partner/chat, sender, and message text. Existing `#/telegram` bookmarks open Confirms; no separate Telegram settings tab is needed.
+
+The server extracts context from the original send and uses AI only to interpret the reply. It never substitutes a play-to price for reported odds. Missing or ambiguous fields are left blank and marked for review. **Save** persists field changes and grades; polling preserves unsaved form edits and stale revision checks prevent overwriting changes from another screen. **Reset edits** restores the saved row. Manual entry works even without an AI key. Later Telegram edits flag review and preserve existing bet corrections and grades; AI retries cannot replace saved rows.
+
+Grades are **UNGRADED**, **VOID**, **WIN**, **LOSS**, and **PARTRETURN**. Ungraded P/L is blank; VOID is zero; LOSS is negative risk; WIN is net profit excluding returned stake, using American odds and rounding to cents. PARTRETURN takes a manually entered **signed net P/L**, directly: `+50` is $50 profit, `-25` is $25 loss, and `0` is break-even. All required bet fields must be complete before grading. The backend calculates P/L and ignores any client-supplied P/L. These records belong to the originating partner; this does not infer sharing agreements or update payment balances.
+
+## Low-cost AI setup
+
+Add **`DO_INFERENCE_API_KEY`** as an encrypted **Runtime** variable in DigitalOcean, using a model access key with access to **Ministral 3 14B Instruct**. This is separate from the Telegram bot token. The default model ID is **`mistral-3-14B`**; override it with `DO_INFERENCE_MODEL` only if needed. Requests go to the fixed DigitalOcean serverless endpoint `https://inference.do-ai.run/v1/chat/completions`. DigitalOcean inference requires available credits. Published model IDs/prices: https://docs.digitalocean.com/products/inference/details/models/ and https://docs.digitalocean.com/products/inference/details/pricing/.
+
+No model key or actual inference call was used during automated tests. After deployment, the app clearly reports missing AI configuration; adding the key enables background extraction of existing and new eligible replies. Set `DO_INFERENCE_ENABLED=false` to pause paid parsing while preserving receiving and manual editing. The worker checks every 10 seconds, processes up to five queued messages per pass, shares one database lock across instances, and retries transient failures up to three times with a one-minute backoff. Refreshing the browser reads saved results and does not itself invoke the LLM.
+
+The AI receives only reply text and compact send/game/market context. Bot tokens, database credentials, partner contact data, and full Telegram events are not sent to the model. Validated output is persisted transactionally; extraction never grades bets. Input/output token counts and model ID are recorded for completed parses. This phase handles text only; screenshots retain raw metadata and require manual entry.
+
+The service automatically creates `hub_confirm_sources` (one durable job per Telegram bot/chat/message), `hub_confirm_bets` (editable fills and grades), and `hub_confirm_history` (before/after changes, grades, and actor). All three use the existing `LOL_DO_DB_*` connection and require CREATE/SELECT/INSERT/UPDATE permissions. Telegram intake and its acknowledgement cursor stay separate from model calls, so AI outages cannot block raw message preservation. Original and edited Telegram events remain in `hub_telegram_inbox`.
+
+`GET /api/confirms`, `PATCH /api/confirms/bets/:rowId`, and `POST /api/confirms/sources/:sourceId/manual|retry` require the app authentication and HTTPS. Writes additionally require same-site JSON with `X-Betting-Hub: confirms`. A corrected BETID must refer to an existing reserved Sends ID; manually corrected game/team/market text is retained independently of the raw reply.
 
 `GET/POST /api/send-drafts`, `PATCH/DELETE /api/send-drafts/:id`, and `POST /api/send-drafts/:id/send` use the app authentication gate. Mutations require JSON and the `X-Betting-Hub: sends` header. The service uses the existing `LOL_DO_DB_*` connection variables and creates `hub_send_drafts` on first access, requiring `CREATE`, `SELECT`, `INSERT`, `UPDATE`, and `DELETE` permissions on that app table. It does not write to `TREVORFAIRS`. This provides a shared queue across devices after deployment, without relying on browser-local draft storage.
 
@@ -46,9 +64,9 @@ One card is kept per match and lineup combination. Each card displays a permanen
 
 ## Telegram bot connection
 
-Open **Telegram** (`#/telegram`) to save the bot token from BotFather and an optional default chat ID. Saving verifies the token with `getMe`; it does not send a message. The server stores the token, bot identity, and default destination as AES-256-GCM encrypted JSON in the MySQL table `hub_telegram_settings`, shared across browsers and deployments. The table is created on first use, using the existing `LOL_DO_DB_*` connection, which needs permission to create/read/write this table. The saved token is never returned to the browser or stored in browser local storage.
+Set **`TELEGRAM_BOT_TOKEN`** as an encrypted **Runtime** variable in DigitalOcean to provision `@bettingtasks_bot`. On first connection, when no saved bot exists, the backend verifies the token with `getMe` and saves the connection automatically. The server stores bot credentials as AES-256-GCM encrypted JSON in `hub_telegram_settings`, shared across browsers and deployments. Existing saved settings take priority over the bootstrap environment variable. There is no credential-entry form in the app. The table is created on first use with the existing `LOL_DO_DB_*` connection. Tokens are never returned to the browser or stored in browser local storage.
 
-Before using this page, add **`TELEGRAM_CREDENTIALS_KEY`** as an **encrypted Runtime** environment variable on the DigitalOcean service. Generate its 64-character hex value once with:
+Also set **`TELEGRAM_CREDENTIALS_KEY`** as an **encrypted Runtime** environment variable on the DigitalOcean service. Generate its 64-character hex value once with:
 
 ```sh
 openssl rand -hex 32
@@ -56,17 +74,11 @@ openssl rand -hex 32
 
 Keep this key stable and backed up; replacing it prevents the server from decrypting saved credentials. Do not use a `REACT_APP_` prefix or commit the token/key. Database and Telegram failures are sanitized before returning them to the browser. All Telegram routes require the existing app authentication and HTTPS; writes also require same-site JSON requests and the app's custom header.
 
-Alternatively, provision the bot with an encrypted **Runtime** variable named `TELEGRAM_BOT_TOKEN`. On first connection, when no saved bot exists, the backend verifies this token and saves it encrypted in MySQL. Existing in-app settings take priority; the environment variable never overwrites a later change made through the Telegram page. Runtime values are not bundled into the frontend. This provisioning path requires deployment of the Telegram backend code.
-
-- **Test connection** checks bot identity, group privacy mode, and whether a webhook is already active. It never changes a webhook.
-- **Refresh saved messages** reads the latest 100 messages from the permanent MySQL inbox, including recognized bet IDs and receiver errors. It does not contact Telegram or advance the polling cursor.
-- **Send message** sends plain text only when the user submits the composer. Use a numeric chat ID (positive for a private chat, commonly negative for a group/channel) or public `@channel` username. Invite links are not send destinations. The bot must have access and posting permission. Start a private conversation with `/start`, wait for receiving, then refresh saved messages to find its chat ID.
-
-Manual messaging, Sends card delivery, and background receiving use the same saved bot connection. AI parsing and creating confirmed bets remain separate work. Tests use mocked Telegram responses and never send live messages.
+**Refresh replies** in Confirms reads only saved matching partner messages and receiver status. It never contacts Telegram or advances the cursor. Sending from Sends and background receiving use the same saved bot connection. Tests use mocked Telegram responses and never send live messages.
 
 ## Raw Telegram receiving
 
-The Node server starts a receiver immediately and checks for updates every **10 seconds**, independently of the browser. It uses the saved bot (connect `@bettingtasks_bot` on the Telegram page), the existing encrypted credentials, and the existing `LOL_DO_DB_*` MySQL connection. No AI API or additional package is needed. It automatically creates these InnoDB/utf8mb4 tables, requiring `CREATE`, `SELECT`, `INSERT`, and `UPDATE` permissions:
+The Node server starts a receiver immediately and checks for updates every **10 seconds**, independently of the browser. It uses the saved bot provisioned from DigitalOcean runtime settings, the existing encrypted credentials, and the existing `LOL_DO_DB_*` MySQL connection. No AI API or additional package is needed. It automatically creates these InnoDB/utf8mb4 tables, requiring `CREATE`, `SELECT`, `INSERT`, and `UPDATE` permissions:
 
 | Table | Stored data |
 | --- | --- |
@@ -74,7 +86,7 @@ The Node server starts a receiver immediately and checks for updates every **10 
 | `hub_telegram_message_bets` | Recognized bet IDs, permanent draft IDs, and a snapshot of the send's context at receipt. One message can reference multiple sends. |
 | `hub_telegram_poll_state` | Per-bot cursor, most recent successful poll and incoming update time, and sanitized receiver errors. |
 
-For example, `BOS145 ML -110 $500 -1.5 +150 200` is saved unchanged and linked to `BOS145` if it exists in `hub_send_ids`. Matching is case-insensitive and requires a complete six-character token; unknown IDs and messages without IDs are still saved. This phase does not extract odds/risk or create Confirms. Existing ID reservations remain recognizable after draft deletion, although their deleted draft context is unavailable; previously archived context is retained. Send/partner context is reference metadata, not proof that a sender placed a bet.
+For example, `BOS145 ML -110 $500 -1.5 +150 200` is saved unchanged and linked to `BOS145` if it exists in `hub_send_ids`. Matching is case-insensitive and requires a complete six-character token; unknown IDs and messages without IDs are still saved. Confirms queues eligible partner replies for extraction after their raw data is durable. Existing ID reservations remain recognizable after draft deletion, although deleted draft context may be unavailable; previously archived context is retained. A raw reply or AI extraction alone is not an independently verified bookmaker receipt.
 
 The Bot API returns a bot-wide stream, so every message delivered to this bot is preserved, including partner channels such as `trevor_partner`, group messages, and direct messages. There is no per-channel polling call or dependency on browser-local partner records. Add the bot to each intended chat. For channels, grant administrator access. For plain text in groups, make the bot an administrator or disable its privacy mode through BotFather. Comments on a channel post arrive in its linked discussion group, where the bot also needs access.
 

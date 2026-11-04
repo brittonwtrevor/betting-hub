@@ -187,7 +187,7 @@ async function readySend(marketIds = ['a:ml', 'match:kills:over:1']) {
 test('sending saves edits, formats the bet ID/markets/notes, deduplicates destinations and reloads persisted delivery', async () => {
   const { service, draft } = await readySend();
   const calls = [];
-  const telegram = { async sendMessage(input) { calls.push(input); return { message: { messageId: 42 } }; } };
+  const telegram = { async sendMessage(input) { calls.push(input); return { message: { messageId: 42, chatId: '-100123' } }; } };
   draft.recipients.push({ id: 'same-channel', name: 'Same group', telegramChannel: '-100123' });
   const sent = await service.send(draft.id, draft, telegram);
   assert.equal(calls.length, 1);
@@ -200,6 +200,7 @@ test('sending saves edits, formats the bet ID/markets/notes, deduplicates destin
   assert.match(calls[0].text, /Notes: Line might move/);
   assert.equal(sent.deliveries[0].status, 'sent');
   assert.equal(sent.deliveries[0].messageId, 42);
+  assert.equal(sent.deliveries[0].chatId, '-100123');
   assert.equal((await service.list())[0].notes, draft.notes);
   const again = await service.send(sent.id, (await service.list())[0], telegram);
   assert.equal(calls.length, 1);

@@ -50,7 +50,7 @@ function createTelegramReceiver({ telegramService, sendsService, env = process.e
     let botId;
     try {
       const config = await telegramService.getConfig();
-      if (!config.configured) throw Object.assign(new Error('Save the bettingtasks bot connection on the Telegram page to start receiving.'), { telegramSafe: true });
+      if (!config.configured) throw Object.assign(new Error('Set TELEGRAM_BOT_TOKEN in DigitalOcean runtime settings to start receiving.'), { telegramSafe: true });
       botId = String(config.bot.id);
       const db = await database();
       connection = await db.getConnection();
@@ -143,25 +143,40 @@ function createTelegramReceiver({ telegramService, sendsService, env = process.e
       timer.unref?.();
       void poll();
     },
-    async readInbox() {
+    async readInbox({ forParsing = false } = {}) {
       const config = await telegramService.getConfig();
       if (!config.configured) return { messages: [], updateCount: 0, fetchedAt: now().toISOString(), receiver: { intervalMs: POLL_INTERVAL_MS, error: lastLocalError } };
       const db = await database();
       const botId = String(config.bot.id);
       const [rows] = await db.execute(`SELECT inbox.*, COALESCE((SELECT JSON_ARRAYAGG(bets.bet_id)
-        FROM hub_telegram_message_bets bets WHERE bets.bot_id = inbox.bot_id AND bets.update_id = inbox.update_id), JSON_ARRAY()) AS matched_bet_ids
-        FROM hub_telegram_inbox inbox WHERE bot_id = ? AND message_id IS NOT NULL ORDER BY received_at DESC, update_id DESC LIMIT 100`, [botId]);
+        FROM hub_telegram_message_bets bets WHERE bets.bot_id = inbox.bot_id AND bets.update_id = inbox.update_id), JSON_ARRAY()) AS matched_bet_ids,
+        COALESCE((SELECT JSON_ARRAYAGG(JSON_OBJECT('betId', context.bet_id, 'draftId', context.draft_id, 'context', context.send_context))
+        FROM hub_telegram_message_bets context WHERE context.bot_id = inbox.bot_id AND context.update_id = inbox.update_id), JSON_ARRAY()) AS send_contexts
+        FROM hub_telegram_inbox inbox WHERE bot_id = ? AND message_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM hub_telegram_message_bets linked
+          WHERE linked.bot_id = inbox.bot_id AND linked.update_id = inbox.update_id AND (
+            JSON_CONTAINS(JSON_EXTRACT(linked.send_context, '$.recipients[*].telegramChannel'), JSON_QUOTE(CAST(inbox.chat_id AS CHAR)))
+            OR JSON_CONTAINS(LOWER(JSON_EXTRACT(linked.send_context, '$.recipients[*].telegramChannel')),
+              JSON_QUOTE(LOWER(CONCAT('@', JSON_UNQUOTE(JSON_EXTRACT(inbox.raw_update, CONCAT('$.', inbox.kind, '.chat.username')))))))
+            OR JSON_CONTAINS(JSON_EXTRACT(linked.send_context, '$.deliveries[*].chatId'), JSON_QUOTE(CAST(inbox.chat_id AS CHAR)))
+          ))
+        ${forParsing ? `AND NOT EXISTS (SELECT 1 FROM hub_confirm_sources imported WHERE imported.bot_id = inbox.bot_id
+          AND imported.chat_id = inbox.chat_id AND imported.message_id = inbox.message_id AND imported.update_id = inbox.update_id)
+        AND NOT EXISTS (SELECT 1 FROM hub_telegram_inbox newer WHERE newer.bot_id = inbox.bot_id AND newer.chat_id = inbox.chat_id
+          AND newer.message_id = inbox.message_id AND (newer.received_at > inbox.received_at
+          OR (newer.received_at = inbox.received_at AND newer.update_id > inbox.update_id)))` : ''}
+        ORDER BY received_at DESC, update_id DESC LIMIT 100`, [botId]);
       const [[state]] = await db.execute('SELECT * FROM hub_telegram_poll_state WHERE bot_id = ?', [botId]);
       const messages = rows.map(row => {
         const update = parseJson(row.raw_update);
         const message = update[row.kind];
         return {
-          updateId: Number(row.update_id), kind: row.kind, messageId: Number(row.message_id),
+          botId: String(row.bot_id), updateId: Number(row.update_id), kind: row.kind, messageId: Number(row.message_id),
           date: message.date ? new Date(message.date * 1000).toISOString() : null,
-          chatId: String(row.chat_id), chat: message.chat?.title || message.chat?.username || message.chat?.first_name || 'Unknown chat',
+          chatId: String(row.chat_id), chatUsername: message.chat?.username || '', chat: message.chat?.title || message.chat?.username || message.chat?.first_name || 'Unknown chat',
           from: message.from?.username || [message.from?.first_name, message.from?.last_name].filter(Boolean).join(' ') || message.sender_chat?.title || '',
           text: row.raw_text, hasMedia: !message.text && !!(message.photo || message.document || message.video || message.voice || message.audio || message.sticker),
-          candidateBetIds: parseJson(row.candidate_bet_ids), betIds: parseJson(row.matched_bet_ids), receivedAt: row.received_at,
+          candidateBetIds: parseJson(row.candidate_bet_ids), betIds: parseJson(row.matched_bet_ids), contexts: parseJson(row.send_contexts) || [], receivedAt: row.received_at,
         };
       });
       return { messages, updateCount: messages.length, fetchedAt: now().toISOString(), receiver: {

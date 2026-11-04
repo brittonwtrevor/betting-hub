@@ -27,7 +27,10 @@ Hash-based navigation works with the password-protected production server, inclu
 - `server/sends.cjs`: central draft persistence, merge/deduplication, market validation, and revision checks.
 - `server/telegram.cjs`: encrypted bot credentials and server-side Telegram API calls.
 - `server/telegram-receiver.cjs`: 10-second background polling, transactional raw-update persistence, durable cursors, send-ID links, and the saved inbox.
-- `src/features/bets/`: shared market catalog, game-market checklist, Sends provider and editable cards.
+- `server/confirm-parser.cjs`: low-cost DigitalOcean extraction with compact send context, output validation, and sanitized provider errors.
+- `server/confirms.cjs`: durable extraction queue, partner-linked fill rows, revision checks, manual corrections, grading, and history.
+- `src/features/bets/confirmationFields.js`: shared field validation and net P/L calculation; the server always recalculates saved P/L.
+- `src/features/bets/`: shared market catalog, game-market checklist, Sends provider and editable cards, and the Confirms inbox for saved partner replies with recognized bet IDs.
 - `server/lol.cjs`: read-only `TREVORFAIRS` adapter, Shiny-equivalent formatting/series calculations, and verified MySQL TLS configuration.
 - `src/features/sports/lol/`: Upcoming Games table, filters, pagination, and Eastern Time display.
 

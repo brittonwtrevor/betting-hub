@@ -39,8 +39,17 @@ function fixture(options = {}) {
       if (lastUpdate != null) saved.states[botId].last_update_at_ms = lastUpdate;
     } else if (sql.startsWith('UPDATE hub_telegram_poll_state SET last_error')) saved.states[p[1]].last_error = p[0];
     else if (sql.startsWith('SELECT inbox.')) {
-      return [Object.values(saved.inbox).filter(row => row.message_id != null && String(row.bot_id) === p[0]).reverse().slice(0, 100).map(row => ({ ...row,
+      assert.match(sql, /AND EXISTS/);
+      assert.match(sql, /JSON_CONTAINS/);
+      return [Object.values(saved.inbox).filter(row => row.message_id != null && String(row.bot_id) === p[0] && Object.values(saved.bets).some(bet => {
+        if (bet.bot_id !== row.bot_id || bet.update_id !== row.update_id || !bet.send_context) return false;
+        const context = JSON.parse(bet.send_context);
+        const message = JSON.parse(row.raw_update)[row.kind];
+        return context.recipients?.some(partner => partner.telegramChannel === String(row.chat_id) || partner.telegramChannel?.toLowerCase() === `@${message.chat?.username}`.toLowerCase())
+          || context.deliveries?.some(delivery => delivery.chatId === String(row.chat_id));
+      })).reverse().slice(0, 100).map(row => ({ ...row,
         matched_bet_ids: JSON.stringify(Object.values(saved.bets).filter(bet => bet.bot_id === row.bot_id && bet.update_id === row.update_id).map(bet => bet.bet_id)),
+        send_contexts: JSON.stringify(Object.values(saved.bets).filter(bet => bet.bot_id === row.bot_id && bet.update_id === row.update_id).map(bet => ({ betId: bet.bet_id, draftId: bet.draft_id, context: JSON.parse(bet.send_context) }))),
       }))];
     }
     return [{ affectedRows: 1 }];
@@ -193,8 +202,40 @@ test('saved inbox reads durable messages and polling status without making a Tel
   assert.equal(inbox.messages[0].text, 'BOS145 ML -110 $500');
   assert.deepEqual(inbox.messages[0].betIds, ['BOS145']);
   assert.equal(inbox.messages[0].chat, 'trevor_partner');
+  assert.equal(inbox.messages[0].botId, '123456789');
+  assert.equal(inbox.messages[0].contexts[0].betId, 'BOS145');
+  assert.equal(inbox.messages[0].contexts[0].context.game.team_a, 'Boston');
   assert.equal(inbox.receiver.lastPolledAt, date);
   assert.equal(f.trace.filter(item => item.receive).length, calls);
+});
+
+test('parser backlog reads use the latest unimported version while the normal inbox remains an event archive', async () => {
+  const f = fixture({ updates: [update(42, 'BOS145 ML -110 $500')] });
+  await f.receiver.poll();
+  await f.receiver.readInbox({ forParsing: true });
+  const sql = f.trace.filter(item => item.sql?.startsWith('SELECT inbox.')).at(-1).sql;
+  assert.match(sql, /hub_confirm_sources imported/);
+  assert.match(sql, /hub_telegram_inbox newer/);
+  assert.match(sql, /imported\.update_id = inbox\.update_id/);
+});
+
+test('inbox shows only recognized bet IDs from their partner chats while preserving all incoming raw events', async () => {
+  const f = fixture({ updates: [update(42, 'BOS145 ML -110 $500'), update(43, 'a partner note without an ID'),
+    update(44, 'BAD999 unknown ID'), update(45, 'BOS145 unrelated chat', 'message', { chat: { id: -999999, title: 'trevor_partner' } })] });
+  await f.receiver.poll();
+  assert.equal(Object.keys(f.saved.inbox).length, 4);
+  assert.equal(Object.keys(f.saved.bets).length, 2);
+  const inbox = await f.receiver.readInbox();
+  assert.deepEqual(inbox.messages.map(message => message.updateId), [42]);
+  // Numeric chat IDs work for private partner groups without a username.
+  f.setUpdates([update(46, 'BOS145 numeric group', 'message', { chat: { id: -100777, title: 'Private partner' } })]);
+  await f.receiver.poll();
+  const link = f.saved.bets['123456789:46:BOS145'];
+  link.send_context = JSON.stringify({ recipients: [{ telegramChannel: '-100777' }] });
+  assert.deepEqual((await f.receiver.readInbox()).messages.map(message => message.updateId), [46, 42]);
+  // A recorded delivery's resolved numeric ID survives a public username change.
+  link.send_context = JSON.stringify({ recipients: [{ telegramChannel: '@old_username' }], deliveries: [{ chatId: '-100777' }] });
+  assert.deepEqual((await f.receiver.readInbox()).messages.map(message => message.updateId), [46, 42]);
 });
 
 test('rediscovers randomized Telegram IDs after a week without incoming updates', async () => {
@@ -211,7 +252,7 @@ test('rediscovers randomized Telegram IDs after a week without incoming updates'
 test('missing credentials and lock-release failures are recoverable without leaking secrets or retaining a locked pooled connection', async () => {
   const missing = fixture();
   missing.config.configured = false;
-  assert.match((await missing.receiver.poll()).error, /Save the bettingtasks/);
+  assert.match((await missing.receiver.poll()).error, /TELEGRAM_BOT_TOKEN/);
   assert.equal(missing.trace.some(item => item.receive), false);
   const f = fixture({ fail: sql => sql.startsWith('SELECT RELEASE_LOCK') });
   await f.receiver.poll();
