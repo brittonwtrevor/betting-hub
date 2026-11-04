@@ -2,16 +2,17 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
+import { navigation } from './app/navigation';
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.scrollTo = jest.fn();
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {} }) });
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [] }) });
 });
 afterEach(() => { delete global.fetch; });
 
-function navigate(path) {
-  act(() => {
+async function navigate(path) {
+  await act(async () => {
     window.history.replaceState(null, '', `/#${path}`);
     window.dispatchEvent(new HashChangeEvent('hashchange'));
   });
@@ -21,7 +22,7 @@ test('opens Monitoring with planned connections and no invented health results',
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
-  expect(within(nav).getAllByRole('link')).toHaveLength(6);
+  expect(within(nav).getAllByRole('link')).toHaveLength(7);
   const sources = screen.getByRole('table', { name: 'Source health' });
   expect(within(sources).getAllByText('Not connected')).toHaveLength(7);
   expect(screen.getByText('No freshness checks have run', { exact: false })).toBeInTheDocument();
@@ -30,21 +31,21 @@ test('opens Monitoring with planned connections and no invented health results',
 test('supports every workspace and sports deep links, including hash navigation', async () => {
   window.history.replaceState(null, '', '/#/sports/lol');
   render(<App />);
-  expect(screen.getByRole('heading', { level: 2, name: 'League of Legends' })).toBeInTheDocument();
+  expect(screen.getByRole('navigation', { name: 'Sports dashboards' })).toBeInTheDocument();
   await screen.findByText('Database connected');
   const destinations = [
-    ['/bets', 'Active Bets'], ['/suggestions', 'Bet Suggestions'],
+    ['/bets', 'Active Bets'], ['/suggestions', 'Trading Dashboard'],
     ['/partners', 'Partner Accounting'], ['/analytics', 'Analytics'], ['/', 'Monitoring'],
   ];
-  destinations.forEach(([path, label]) => {
-    navigate(path);
+  for (const [path, label] of destinations) {
+    await navigate(path);
     expect(document.title).toBe(`${label} · Betting Hub`);
-  });
-  ['hockey', 'lol', 'nascar'].forEach(sport => {
-    navigate(`/sports/${sport}`);
+  }
+  for (const sport of ['hockey', 'lol', 'nascar']) {
+    await navigate(`/sports/${sport}`);
     expect(screen.getByRole('navigation', { name: 'Sports dashboards' })).toBeInTheDocument();
-  });
-  navigate('/unknown-page');
+  }
+  await navigate('/unknown-page');
   expect(screen.getByRole('link', { name: 'Back to Monitoring' })).toHaveAttribute('href', '#/');
 });
 

@@ -1,14 +1,3 @@
-import React, { useState } from 'react';
-import Icon from '../../components/Icon';
-import { Badge, EmptyTable, InfoNote, Panel, Segments, SelectField, StatGrid, sportOptions } from '../../components/ui';
-export default function SuggestionsPage() {
-  const [view, setView] = useState('queue');
-  const [sport, setSport] = useState('all');
-  const [status, setStatus] = useState('new');
-  return <>
-    <StatGrid items={[{ label: 'New opportunities', value: '0', note: 'No suggestions received', icon: 'spark' }, { label: 'Awaiting review', value: '0', note: 'Your queue is empty', icon: 'inbox' }, { label: 'Sent for placement', value: '0', note: 'No recommendations sent', icon: 'arrow' }, { label: 'Alert sources', value: '0', note: 'Awaiting connected models', icon: 'bell' }]} />
-    <Segments label="Suggestion workspace" items={[{ value: 'queue', label: 'Opportunity queue' }, { value: 'alerts', label: 'Alert coverage' }]} value={view} onChange={setView} />
-    {view === 'queue' ? <Panel title="Opportunities" description="Fair prices, available odds, and conditions for each suggested bet." action={<Badge>Awaiting models</Badge>}><div className="filter-row panel-filters"><SelectField label="Sport" value={sport} onChange={setSport} options={sportOptions} /><SelectField label="Status" value={status} onChange={setStatus} options={[{ value: 'new', label: 'New' }, { value: 'reviewed', label: 'Reviewed' }, { value: 'sent', label: 'Sent' }, { value: 'placed', label: 'Placed' }, { value: 'passed', label: 'Passed' }, { value: 'expired', label: 'Expired' }]} /></div><EmptyTable columns={['Event / Selection', 'Available odds', 'Fair odds', 'Edge', 'Source', 'Updated']} icon="spark" title={status === 'new' ? 'Ready for your next opportunity' : `No ${status} suggestions`} description="Model-backed suggestions will appear here with their price, supporting data, and placement conditions." /></Panel> : <Panel title="Alert coverage" description="The signals this workspace will watch once sources are connected."><div className="alert-rule-list">{[{ title: 'New betting opportunity', description: 'A model identifies a bet that meets your criteria.', icon: 'spark' }, { title: 'Price or edge changes', description: 'An opportunity moves outside its acceptable price.', icon: 'chart' }, { title: 'Required input confirmed', description: 'A goalie, lineup, or other condition is confirmed.', icon: 'users' }, { title: 'Suggestion expires', description: 'The event starts or its supporting data becomes stale.', icon: 'clock' }].map(rule => <div className="alert-rule" key={rule.title}><span className="source-icon"><Icon name={rule.icon} /></span><div><h3>{rule.title}</h3><p>{rule.description}</p></div><Badge>Not configured</Badge></div>)}</div></Panel>}
-    <InfoNote>New opportunities and important changes will appear in the Alerts inbox. Alert delivery and thresholds will be configured with the integrations.</InfoNote>
-  </>;
-}
+import React from 'react';
+import LolUpcomingGames from '../sports/lol/LolUpcomingGames';
+export default function SuggestionsPage() { return <LolUpcomingGames trading />; }

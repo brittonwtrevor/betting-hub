@@ -46,3 +46,12 @@ export function sortGames(games, column, direction) {
     return direction === 'asc' ? result : -result;
   });
 }
+
+export function isSeriesFair(row, column) {
+  const keys = {
+    BO1: ['xgb_map1', 'map1_probability'],
+    BO3: ['bo3_price', 'bo3_probability'],
+    BO5: ['bo5_price', 'bo5_probability'],
+  };
+  return row[column.key] != null && (keys[row.series_format] || []).includes(column.key);
+}

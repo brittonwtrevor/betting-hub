@@ -1,12 +1,12 @@
 # Betting Hub structure
 
-This version provides the interface and navigation for six workspaces. League of Legends Upcoming Games reads published outputs from DigitalOcean MySQL; the remaining integrations are placeholders. It stores no bets or account information.
+This version provides the interface and navigation for six workspaces. League of Legends Upcoming Games reads published outputs from DigitalOcean MySQL; Sends stores draft selections centrally; confirmed placements and financial-account integrations remain placeholders.
 
 | Workspace | URL |
 | --- | --- |
 | Monitoring (home) | `#/` |
 | Active Bets | `#/bets` |
-| Bet Suggestions | `#/suggestions` |
+| Trading Dashboard | `#/suggestions` |
 | Hockey | `#/sports/hockey` |
 | League of Legends | `#/sports/lol` |
 | NASCAR | `#/sports/nascar` |
@@ -24,6 +24,8 @@ Hash-based navigation works with the password-protected production server, inclu
 - `src/features/sports/config.js`: the views, table columns, and input coverage for each sport.
 - `src/App.css` and `src/index.css`: shared responsive layout and visual styles, without external CSS dependencies.
 - `server/index.cjs`: production static serving with server-side HTTP Basic authentication. Credentials come from runtime environment variables; `/healthz` exposes no app content.
+- `server/sends.cjs`: central draft persistence, merge/deduplication, market validation, and revision checks.
+- `src/features/bets/`: shared market catalog, game-market checklist, Sends provider and editable cards.
 - `server/lol.cjs`: read-only `TREVORFAIRS` adapter, Shiny-equivalent formatting/series calculations, and verified MySQL TLS configuration.
 - `src/features/sports/lol/`: Upcoming Games table, filters, pagination, and Eastern Time display.
 

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { normalizeTelegramChannel } from './telegram';
+import { storageKey, readPartners } from './registry';
 import { EmptyState, InfoNote, Panel, SearchField, Segments, StatGrid } from '../../components/ui';
 
-const storageKey = 'betting-hub.partner-names.v1';
 const views = {
   balances: { title: 'Partner balances', columns: ['Partner', 'Open exposure', 'Settled P/L', 'Your share', 'Payments', 'Owed to you', 'Owed to partner'], empty: 'No partner balances yet' },
   reports: { title: 'Bet reports', columns: ['Partner', 'Placed (ET)', 'Event / Selection', 'Sport', 'Stake', 'Odds', 'Status', 'Settled P/L', 'Your share'], empty: 'No partner bets yet' },
@@ -10,13 +10,6 @@ const views = {
 };
 const currency = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
 const date = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
-function readPartners() {
-  try {
-    const saved = JSON.parse(window.localStorage.getItem(storageKey) || '[]');
-    return Array.isArray(saved) ? saved.filter(partner => partner && typeof partner.id === 'string' && typeof partner.name === 'string').map(partner => ({ ...partner, telegramChannel: typeof partner.telegramChannel === 'string' ? partner.telegramChannel : '' })) : [];
-  } catch { return []; }
-}
-
 // Connected records can supply published balances without assuming how partners fund bets.
 export default function PartnersPage({ partners: connectedPartners = [], bets = [], payments = [] }) {
   const [localPartners, setLocalPartners] = useState(readPartners);
@@ -89,7 +82,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
     {adding && <form id="add-partner" className="partner-form" onSubmit={addPartner}>
       <label htmlFor="partner-name">Partner name</label>
       <div><input autoFocus id="partner-name" value={name} maxLength={80} onChange={event => setName(event.target.value)} aria-describedby={error ? 'partner-error' : 'partner-storage-note'} /></div>
-      <label htmlFor="partner-telegram">Telegram channel (optional)</label>
+      <label htmlFor="partner-telegram">Telegram group (optional)</label>
       <div><input id="partner-telegram" value={telegramChannel} maxLength={200} placeholder="@channel, t.me/channel, or -100…" onChange={event => setTelegramChannel(event.target.value)} aria-describedby={error ? 'partner-error' : 'partner-storage-note'} /><button type="submit" className="button button-primary">Create tab</button></div>
       <p id="partner-storage-note">Partner names and channels are saved in this browser. Telegram syncing is awaiting connection.</p>
       {error && <p id="partner-error" role="alert">{error}</p>}

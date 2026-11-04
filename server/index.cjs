@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, sendsService, telegramService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -67,15 +67,81 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       }, head);
     }
 
-    if (!['GET', 'HEAD'].includes(request.method)) {
-      return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD' });
-    }
-
     let pathname;
     try { pathname = decodeURIComponent(rawPath); }
     catch { return reply(response, 400, 'Invalid path.\n', {}, head); }
     if (!pathname.startsWith('/') || /[\\\0]/.test(pathname) || pathname.split('/').some(part => part.startsWith('.'))) {
       return reply(response, 404, 'Not found.\n', {}, head);
+    }
+
+    const telegramRoute = /^\/api\/telegram\/(config|test|updates|messages)$/.exec(pathname);
+    if (telegramRoute) {
+      const action = telegramRoute[1];
+      const allowed = action === 'config' ? ['GET', 'HEAD', 'PUT'] : ['POST'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        let body;
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          if (request.headers['x-betting-hub'] !== 'telegram' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Telegram in Betting Hub to use this connection.' });
+          if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Telegram requests require JSON.' });
+          let size = 0;
+          const chunks = [];
+          for await (const chunk of request) {
+            size += Buffer.byteLength(chunk);
+            if (size > 32768) return json(413, { message: 'This Telegram request is too large.' });
+            chunks.push(Buffer.from(chunk));
+          }
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          catch { return json(400, { message: 'Invalid Telegram JSON.' }); }
+        }
+        if (!telegramService) return json(503, { message: 'Telegram is not configured on this server yet.' });
+        if (action === 'config') return json(200, request.method === 'PUT' ? await telegramService.saveConfig(body) : await telegramService.getConfig());
+        if (action === 'test') return json(200, await telegramService.testConnection());
+        if (action === 'updates') return json(200, await telegramService.readUpdates());
+        return json(200, await telegramService.sendMessage(body));
+      } catch (error) {
+        if (error.telegramSafe) return json(error.status, { message: error.message });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: error.code === 'DB_NOT_CONFIGURED' ? 'Configure the app database to save Telegram credentials.' : 'Unable to load or save the Telegram connection. Please try again.' });
+      }
+    }
+
+    const draftRoute = /^\/api\/send-drafts(?:\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
+    if (draftRoute) {
+      const id = draftRoute[1];
+      const allowed = id ? ['PATCH', 'DELETE'] : ['GET', 'HEAD', 'POST'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        let body;
+        if (!['GET', 'HEAD'].includes(request.method)) {
+          // A custom header plus JSON prevents authenticated cross-site form writes.
+          if (request.headers['x-betting-hub'] !== 'sends' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Sends in Betting Hub to edit drafts.' });
+          if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Drafts require JSON.' });
+          let size = 0;
+          const chunks = [];
+          for await (const chunk of request) {
+            size += Buffer.byteLength(chunk);
+            if (size > 98304) throw Object.assign(new Error('This draft is too large.'), { status: 413 });
+            chunks.push(Buffer.from(chunk));
+          }
+          try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+          catch { throw Object.assign(new Error('Invalid draft JSON.'), { status: 400 }); }
+        }
+        if (!sendsService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
+        if (request.method === 'GET' || head) return json(200, { drafts: await sendsService.list() });
+        if (request.method === 'POST') return json(200, { draft: await sendsService.add(body) });
+        if (request.method === 'PATCH') return json(200, { draft: await sendsService.update(id, body) });
+        await sendsService.remove(id, body?.revision);
+        return json(200, { removed: true });
+      } catch (error) {
+        if ([400, 404, 409, 413].includes(error.status)) return json(error.status, { message: error.message });
+        const missing = error.code === 'DB_NOT_CONFIGURED';
+        return json(missing ? 503 : 502, { message: missing ? 'Sends storage is not configured yet.' : 'Unable to save or load Sends. Please try again.' });
+      }
+    }
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD' });
     }
 
     if (pathname === '/api/lol/upcoming-games') {
@@ -129,12 +195,14 @@ if (require.main === module) {
   try {
     const development = process.argv.includes('--dev');
     const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
+    const sendsService = require('./sends.cjs').createSendsService();
+    const telegramService = require('./telegram.cjs').createTelegramService();
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService,
+      upcomingGamesService, sendsService, telegramService,
     });
     const port = Number(process.env.PORT || 8080);
     http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {

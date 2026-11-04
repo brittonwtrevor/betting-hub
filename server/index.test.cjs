@@ -1,3 +1,4 @@
+const { Readable } = require('node:stream');
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -23,8 +24,9 @@ before(async () => {
 });
 after(async () => { if (temp) await fs.rm(temp, { recursive: true, force: true }); });
 
-async function request(url, { authorization, https = true, method = 'GET', useHandler = handler } = {}) {
-  const request = { url, method, socket: {}, headers: {} };
+async function request(url, { authorization, https = true, method = 'GET', useHandler = handler, headers = {}, body } = {}) {
+  const request = Readable.from(body === undefined ? [] : [typeof body === 'string' ? body : JSON.stringify(body)]);
+  Object.assign(request, { url, method, socket: {}, headers: { ...headers } });
   if (authorization) request.headers.authorization = authorization;
   if (https) request.headers['x-forwarded-proto'] = 'https';
   const result = { status: null, headers: {}, body: '' };
@@ -125,4 +127,42 @@ test('database errors have actionable statuses and never reveal connection detai
   const failed = await request('/api/lol/upcoming-games', { useHandler, authorization: auth });
   assert.equal(failed.status, 502);
   assert.doesNotMatch(failed.body, /private-host|secret|SELECT/);
+});
+
+
+test('draft writes are authenticated, JSON-only, and reject cross-site requests', async () => {
+  let writes = 0;
+  const useHandler = createHandler({ ...credentials, directory, sendsService: {
+    async list() { return []; }, async add(body) { writes++; return body; },
+    async update(id, body) { writes++; return { id, ...body }; },
+    async remove() { writes++; },
+  } });
+  const headers = { 'content-type': 'application/json', 'x-betting-hub': 'sends' };
+  const options = { useHandler, authorization: auth, method: 'POST', headers, body: { game: 'test' } };
+  assert.equal((await request('/api/send-drafts', { ...options, authorization: null })).status, 401);
+  assert.equal((await request('/api/send-drafts', { ...options, https: false })).status, 426);
+  assert.equal((await request('/api/send-drafts', { ...options, headers: {} })).status, 403);
+  assert.equal((await request('/api/send-drafts', { ...options, headers: { ...headers, 'sec-fetch-site': 'cross-site' } })).status, 403);
+  assert.equal((await request('/api/send-drafts', { ...options, headers: { ...headers, 'content-type': 'text/plain' } })).status, 415);
+  assert.equal((await request('/api/send-drafts', { ...options, body: 'broken JSON' })).status, 400);
+  assert.equal((await request('/api/send-drafts', { ...options, body: 'x'.repeat(100000) })).status, 413);
+  assert.equal(writes, 0);
+  const added = await request('/api/send-drafts', options);
+  assert.equal(added.status, 200);
+  assert.deepEqual(JSON.parse(added.body).draft, options.body);
+  assert.equal((await request('/api/send-drafts/abc', { ...options, method: 'PATCH' })).status, 200);
+  assert.equal((await request('/api/send-drafts/abc', { ...options, method: 'DELETE', body: { revision: 1 } })).status, 200);
+  assert.equal(writes, 3);
+  assert.equal((await request('/api/send-drafts', { ...options, method: 'GET' })).status, 200);
+  assert.equal((await request('/api/send-drafts', { ...options, method: 'PUT' })).status, 405);
+});
+
+test('draft failures preserve useful validation errors and never expose database credentials', async () => {
+  assert.equal((await request('/api/send-drafts', { authorization: auth })).status, 503);
+  const useHandler = createHandler({ ...credentials, directory, sendsService: {
+    async list() { throw new Error('private-host password=secret'); },
+  } });
+  const result = await request('/api/send-drafts', { authorization: auth, useHandler });
+  assert.equal(result.status, 502);
+  assert.doesNotMatch(result.body, /private-host|secret/);
 });

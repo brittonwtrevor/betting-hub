@@ -1,12 +1,13 @@
 // Port of apps/dashboard/app.R:getupcominggames in LOL-MODEL-V2.
 // TREVORFAIRS is published by pipelines/publish/WRITEFAIRSTOAWS.R.
 const columns = [
+  ['series_format', 'Format'],
   ['begin_at', 'Start time (ET)', 'date'], ['league', 'League'],
   ['team_a', 'Team A'], ['a', 'A logo', 'image'], ['team_b', 'Team B'], ['b', 'B logo', 'image'],
   ['map1_probability', 'XGB Map1 Probability', 'percent'], ['bo3_probability', 'BO3 Price Probability', 'percent'],
+  ['bo5_probability', 'BO5 Price Probability', 'percent'],
   ['xgb_map1', 'XGB Map1', 'odds'], ['ml_map1', 'ML Map1', 'odds'], ['priors_only', 'Priors Only', 'odds'],
-  ['total', 'Total', 'number'], ['bo3_price', 'BO3 Price', 'odds'],
-  ['bo5_probability', 'BO5 Price Probability', 'percent'], ['bo5_price', 'BO5 Price', 'odds'],
+  ['total', 'Total', 'number'], ['bo3_price', 'BO3 Price', 'odds'], ['bo5_price', 'BO5 Price', 'odds'],
   ['game_duration', 'Game duration', 'number'],
   ...['a', 'b'].flatMap(team => ['adc', 'sup', 'mid', 'jun', 'top'].map(role => [`${team}_${role}`, `${team} ${role}`])),
   ['priors_pred', 'Priors prediction', 'number'], ['bot_lane_pred', 'Bot lane prediction', 'number'],
@@ -79,7 +80,7 @@ function normalizeGame(raw) {
     return probability === null ? null : round(100 * probability, 1);
   };
   const row = {
-    begin_at: raw.begin_at, league: raw.league_name, lineup_note: safeUrl(raw.lineup_note),
+    series_format: null, begin_at: raw.begin_at, league: raw.league_name, lineup_note: safeUrl(raw.lineup_note),
     islastlineup: numeric(raw.islastlineup), game_id: raw.game_id, match_id: raw.match_id,
     team_a: raw.team_a_name, a: safeUrl(raw.image_url_team_a), team_b: raw.team_b_name, b: safeUrl(raw.image_url_team_b),
     map1_probability: percent(map1), bo3_probability: percent(bo3), xgb_map1: map1,
@@ -92,6 +93,31 @@ function normalizeGame(raw) {
     row[`${team}_${role}`] = raw[`team_${team}_${role}_player_name`] || null;
   }
   return row;
+}
+
+// The publisher represents a series as one row per map and lineup variant.
+// Count distinct map IDs before collapsing identical predictions across maps.
+function collapseSeries(rows) {
+  const mapIds = new Map();
+  const hasId = value => value != null && String(value).trim() !== '';
+  for (const row of rows) {
+    if (!hasId(row.match_id) || !hasId(row.game_id)) continue;
+    const key = String(row.match_id);
+    if (!mapIds.has(key)) mapIds.set(key, new Set());
+    mapIds.get(key).add(String(row.game_id));
+  }
+  const seen = new Set();
+  return rows.flatMap((raw, index) => {
+    const row = normalizeGame(raw);
+    const count = hasId(raw.match_id) ? mapIds.get(String(raw.match_id))?.size : null;
+    row.series_format = [1, 3, 5].includes(count) ? `BO${count}` : null;
+    // Keep different lineups, prices, or teams, and never merge unidentified matches.
+    const identity = hasId(raw.match_id) ? String(raw.match_id) : `unidentified-${index}`;
+    const key = JSON.stringify([identity, ...columns.filter(column => column.key !== 'game_id').map(column => row[column.key])]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [row];
+  });
 }
 
 function mysqlOptions(env) {
@@ -129,7 +155,7 @@ function createUpcomingGamesService({ env = process.env, createPool, now = () =>
         const [rows] = await pool.query({ sql, timeout: 15000 });
         const dates = rows.map(row => row.updateddate).filter(Boolean).sort();
         return {
-          columns, games: rows.map(normalizeGame), fetchedAt: now().toISOString(),
+          columns, games: collapseSeries(rows), fetchedAt: now().toISOString(),
           source: { name: 'DigitalOcean MySQL', table: 'TREVORFAIRS', updatedAt: dates.at(-1) || null },
         };
       })();
@@ -140,4 +166,4 @@ function createUpcomingGamesService({ env = process.env, createPool, now = () =>
   };
 }
 
-module.exports = { columns, normalizeGame, round, americanToProbability, mysqlOptions, createUpcomingGamesService };
+module.exports = { columns, collapseSeries, normalizeGame, round, americanToProbability, mysqlOptions, createUpcomingGamesService };

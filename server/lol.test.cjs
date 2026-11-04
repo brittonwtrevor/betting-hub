@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { columns, normalizeGame, mysqlOptions, createUpcomingGamesService } = require('./lol.cjs');
+const { columns, collapseSeries, normalizeGame, mysqlOptions, createUpcomingGamesService } = require('./lol.cjs');
 
 const env = { LOL_DO_DB_HOST: 'db.example.test', LOL_DO_DB_USER: 'reader', LOL_DO_DB_PASSWORD: 'test-only', LOL_DO_DB_NAME: 'defaultdb' };
 const sample = {
@@ -13,9 +13,10 @@ const sample = {
   updateddate: '2026-11-04 17:00:00.000000',
 };
 
-test('reproduces Shiny prices, series probabilities, rounding, and all 34 columns', () => {
+test('reproduces Shiny prices, series probabilities, rounding, and all 35 columns', () => {
   const result = normalizeGame(sample);
-  assert.equal(columns.length, 34);
+  assert.equal(columns.length, 35);
+  assert.equal(columns[0].key, 'series_format');
   assert.deepEqual(columns.slice(-4).map(column => column.key), ['lineup_note', 'islastlineup', 'game_id', 'match_id']);
   assert.deepEqual(Object.keys(result).sort(), columns.map(c => c.key).sort());
   assert.equal(result.xgb_map1, -150);
@@ -94,4 +95,38 @@ test('recovers after a failed read and handles an empty publication', async () =
   const result = await service.getUpcomingGames();
   assert.deepEqual(result.games, []);
   assert.equal(result.source.updatedAt, null);
+});
+
+
+test('collapses repeated maps and infers BO1, BO3, and BO5 before removing duplicates', () => {
+  for (const count of [1, 3, 5]) {
+    const maps = Array.from({ length: count }, (_, i) => ({ ...sample, game_id: 100 + i }));
+    const result = collapseSeries([...maps, maps[0]]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].series_format, `BO${count}`);
+    assert.equal(result[0].xgb_map1, -150);
+  }
+});
+
+test('does not merge distinct matches, lineup variants, or predictions', () => {
+  const maps = Array.from({ length: 5 }, (_, i) => ({ ...sample, game_id: 100 + i }));
+  const result = collapseSeries([
+    ...maps,
+    ...maps.map(row => ({ ...row, team_a_adc_player_name: 'Different ADC', islastlineup: 0 })),
+    { ...maps[0], pred_xgb: -200 },
+    { ...sample, match_id: 91, game_id: 200 },
+  ]);
+  assert.equal(result.length, 4);
+  assert.deepEqual(result.map(row => row.series_format), ['BO5', 'BO5', 'BO5', 'BO1']);
+  assert.equal(result[1].a_adc, 'Different ADC');
+  assert.equal(result[2].xgb_map1, -200);
+});
+
+test('unknown or incomplete map counts do not invent a series format', () => {
+  const result = collapseSeries([{ ...sample }, { ...sample, game_id: 101 }]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].series_format, null);
+  const missingIds = collapseSeries([{ ...sample, match_id: null }, { ...sample, match_id: null }]);
+  assert.equal(missingIds.length, 2);
+  assert.ok(missingIds.every(row => row.series_format === null));
 });

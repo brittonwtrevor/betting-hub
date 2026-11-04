@@ -80,7 +80,7 @@ test('creates a partner with a Telegram channel and persists channel edits and r
   const { unmount } = render(<PartnersPage />);
   await user.click(screen.getByRole('button', { name: 'Add partner' }));
   await user.type(screen.getByRole('textbox', { name: 'Partner name' }), 'Sam');
-  await user.type(screen.getByRole('textbox', { name: 'Telegram channel (optional)' }), 'https://t.me/sam_bets');
+  await user.type(screen.getByRole('textbox', { name: 'Telegram group (optional)' }), 'https://t.me/sam_bets');
   await user.click(screen.getByRole('button', { name: 'Create tab' }));
   expect(screen.getByText('@sam_bets')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Edit channel' }));
@@ -119,7 +119,7 @@ test('rejects an invalid channel before saving the partner', async () => {
   render(<PartnersPage />);
   await user.click(screen.getByRole('button', { name: 'Add partner' }));
   await user.type(screen.getByRole('textbox', { name: 'Partner name' }), 'Sam');
-  await user.type(screen.getByRole('textbox', { name: 'Telegram channel (optional)' }), 'https://example.com/channel');
+  await user.type(screen.getByRole('textbox', { name: 'Telegram group (optional)' }), 'https://example.com/channel');
   await user.click(screen.getByRole('button', { name: 'Create tab' }));
   expect(screen.getByRole('alert')).toHaveTextContent('Use an @channel username');
   expect(window.localStorage.getItem('betting-hub.partner-names.v1')).toBeNull();

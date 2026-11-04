@@ -112,3 +112,26 @@ test('formats Eastern dates through DST and handles numeric filters and missing 
   expect(filtered[0].a_adc).toBe('Previous ADC');
   expect(sortGames(games, columns[4], 'desc').at(-1).xgb_map1).toBeNull();
 });
+
+test('uses a compact toolbar and highlights only the fair matching each series format', async () => {
+  const fairColumns = [
+    { key: 'series_format', label: 'Format', type: 'text' },
+    ...columns,
+    { key: 'bo3_price', label: 'BO3 Price', type: 'odds' },
+    { key: 'bo5_price', label: 'BO5 Price', type: 'odds' },
+  ];
+  fetch.mockResolvedValueOnce(response({ ...payload, columns: fairColumns, games: ['BO1', 'BO3', 'BO5', null].map((format, index) => ({ ...games[0], match_id: index, game_id: index, series_format: format, bo3_price: 200, bo5_price: 250 })) }));
+  render(<LolUpcomingGames />);
+  await screen.findByText('Database connected');
+  expect(screen.queryByRole('heading', { name: 'Upcoming Games' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'League of Legends' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Model coverage')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Refresh data' })).toBeInTheDocument();
+  const rows = dataRows();
+  expect(within(rows[0]).getByText('+150')).toHaveClass('lol-series-fair');
+  expect(within(rows[0]).getByText('+200')).not.toHaveClass('lol-series-fair');
+  expect(within(rows[1]).getByText('+200')).toHaveClass('lol-series-fair');
+  expect(within(rows[1]).getByText('+150')).not.toHaveClass('lol-series-fair');
+  expect(within(rows[2]).getByText('+250')).toHaveClass('lol-series-fair');
+  expect(rows[3].querySelector('.lol-series-fair')).toBeNull();
+});
