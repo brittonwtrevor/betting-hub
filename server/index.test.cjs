@@ -205,3 +205,15 @@ test('card send endpoint requires authenticated same-site JSON POST and passes o
   assert.deepEqual(calls, [{ id: 'draft-1', input: { revision: 2 }, telegram: telegramService }]);
   assert.deepEqual(JSON.parse(result.body), { draft: { id: 'draft-1', deliveries: [] } });
 });
+
+test('feed telemetry requires authentication and serves read-only data without caching', async () => {
+  const url = '/api/monitoring/feeds';
+  const feeds = [{ id: 'ep-rosters', status: 'success' }];
+  const useHandler = createHandler({ ...credentials, directory, feedHealthService: { list: async () => feeds } });
+  assert.equal((await request(url, { useHandler })).status, 401);
+  assert.equal((await request(url, { authorization: auth, method: 'POST', useHandler })).status, 405);
+  const response = await request(url, { authorization: auth, useHandler });
+  assert.deepEqual(JSON.parse(response.body), { feeds });
+  assert.equal(response.headers['Cache-Control'], 'private, no-store');
+  assert.equal((await request(url, { authorization: auth, method: 'HEAD', useHandler })).body, '');
+});

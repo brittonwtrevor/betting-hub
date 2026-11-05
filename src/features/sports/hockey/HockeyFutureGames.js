@@ -7,13 +7,16 @@ import { useSends } from '../../bets/SendsContext';
 import '../lol/lol.css';
 import './hockey.css';
 
+const MEN_NCAA = 'NCAA';
+const clearSelection = { league: 'ALL', search: '', from: '', to: '', goalieFilters: false, minGames: 1, maxLastGame: 40, filters: {} };
+
 export default function HockeyFutureGames() {
   const { openGame } = useSends();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
-  const [selection, setSelection] = useState({ league: 'ALL', search: '', from: '', to: '', homeB2b: 'ALL', awayB2b: 'ALL', goalieFilters: false, minGames: 1, maxLastGame: 40, filters: {} });
+  const [selection, setSelection] = useState({ ...clearSelection, league: MEN_NCAA });
   const [sort, setSort] = useState({ key: 'dateTime', direction: 'asc' });
   const [pageSize, setPageSize] = useState('50');
   const [page, setPage] = useState(0);
@@ -40,9 +43,10 @@ export default function HockeyFutureGames() {
     return () => { active = false; controller.abort(); };
   }, [refresh]);
 
-  const options = useMemo(() => {
-    const unique = key => [...new Set((data?.games || []).map(row => row[key]).filter(Boolean))].sort().map(value => ({ value, label: value }));
-    return { leagues: unique('leagueName'), home: unique('team_b2b_type'), away: unique('opp_b2b_type') };
+  const leagueOptions = useMemo(() => {
+    const publishedLeagues = (data?.games || []).map(row => row.leagueName).filter(Boolean);
+    const leagues = [...new Set([MEN_NCAA, ...publishedLeagues])].sort();
+    return [{ value: 'ALL', label: 'All leagues' }, ...leagues.map(value => ({ value, label: value === MEN_NCAA ? 'NCAA (Men)' : value }))];
   }, [data]);
   const visible = useMemo(() => sortFutureGames(filterGames(data?.games || [], data?.columns || [], selection), data?.columns.find(column => column.key === sort.key), sort.direction), [data, selection, sort]);
   const totalPages = Math.max(1, Math.ceil(visible.length / Number(pageSize)));
@@ -55,24 +59,22 @@ export default function HockeyFutureGames() {
     league: row.leagueName, begin_at: row.dateTime, publishedAt: data?.source?.updatedAt || '',
   });
 
-  return <Panel title="Future Games" description="Model prices, sportsbook odds, and goalie scenarios.">
+  return <Panel>
     <div className="panel-controls lol-controls hockey-controls">
       <div className="filter-row">
         <Badge tone={data && !loading ? 'green' : 'neutral'}>{loading ? 'Loading…' : data ? 'Database connected' : 'Data unavailable'}</Badge>
         <button className="button button-secondary" disabled={loading} onClick={() => setRefresh(value => value + 1)}><Icon name="refresh" size={16} />Refresh data</button>
-        <SelectField label="League" value={selection.league} onChange={value => change('league', value)} options={[{ value: 'ALL', label: 'All leagues' }, ...options.leagues]} />
+        <SelectField label="League" value={selection.league} onChange={value => change('league', value)} options={leagueOptions} />
         <label className="hockey-field">From (ET)<input type="date" value={selection.from} onChange={event => change('from', event.target.value)} /></label>
         <label className="hockey-field">Through (ET)<input type="date" value={selection.to} onChange={event => change('to', event.target.value)} /></label>
-        <SearchField label="Search hockey games" placeholder="Search teams, goalies, games…" value={selection.search} onChange={value => change('search', value)} />
-      </div>
-      <div className="filter-row">
-        <SelectField label="Home B2B" value={selection.homeB2b} onChange={value => change('homeB2b', value)} options={[{ value: 'ALL', label: 'All schedules' }, ...options.home]} />
-        <SelectField label="Away B2B" value={selection.awayB2b} onChange={value => change('awayB2b', value)} options={[{ value: 'ALL', label: 'All schedules' }, ...options.away]} />
         <label className="lol-checkbox"><input type="checkbox" checked={selection.goalieFilters} onChange={event => change('goalieFilters', event.target.checked)} />Use goalie filters (both teams)</label>
         <label className="hockey-field">Minimum goalie games<input type="number" min="0" value={selection.minGames} disabled={!selection.goalieFilters} onChange={event => change('minGames', event.target.value)} /></label>
         <label className="hockey-field">Maximum days since last game<input type="number" min="0" value={selection.maxLastGame} disabled={!selection.goalieFilters} onChange={event => change('maxLastGame', event.target.value)} /></label>
+      </div>
+      <div className="filter-row">
+        <SearchField label="Search hockey games" placeholder="Search teams, goalies, games…" value={selection.search} onChange={value => change('search', value)} />
         <SelectField label="Rows per page" value={pageSize} onChange={value => { setPageSize(value); setPage(0); }} options={['25', '50', '100', '200'].map(value => ({ value, label: value }))} />
-        <button className="button button-secondary" onClick={() => { setSelection({ league: 'ALL', search: '', from: '', to: '', homeB2b: 'ALL', awayB2b: 'ALL', goalieFilters: false, minGames: 1, maxLastGame: 40, filters: {} }); setPage(0); }}>Clear filters</button>
+        <button className="button button-secondary" onClick={() => { setSelection(clearSelection); setPage(0); }}>Clear filters</button>
       </div>
     </div>
     {error ? <div role="alert"><EmptyState icon="link" title="Future Games unavailable" description={error} /></div>

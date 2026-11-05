@@ -54,3 +54,19 @@ test('deletion requires the same authenticated same-site JSON protections and pa
   assert.equal((await request(url, options)).status, 200);
   assert.deepEqual(calls, [['bet-1', { revision: 3 }, 'test-user']]);
 });
+
+
+test('partner bet reports require authentication and use the ledger read without loading the Telegram inbox', async () => {
+  const bets = [{ id: 'fill-1', betId: 'BOS145', settledProfit: 300 }];
+  const modes = [];
+  const request = fixture({ async listReportBets({ includeIncomplete }) { modes.push(includeIncomplete); return bets; }, async list() { throw new Error('Unexpected inbox read'); } });
+  const url = '/api/confirms/bets';
+  assert.equal((await request(url, { headers: { authorization: '' } })).status, 401);
+  assert.equal((await request(url, { method: 'POST' })).status, 405);
+  const response = await request(url);
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(response.body), { bets });
+  assert.equal((await request(url, { method: 'HEAD' })).body, '');
+  assert.equal((await request(`${url}?includeIncomplete=true`)).status, 200);
+  assert.deepEqual(modes, [false, false, true]);
+});

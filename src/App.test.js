@@ -7,7 +7,7 @@ import { navigation } from './app/navigation';
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.scrollTo = jest.fn();
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [], partners: [] }) });
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [], partners: [], bets: [], feeds: [] }) });
 });
 afterEach(() => { delete global.fetch; });
 
@@ -18,15 +18,16 @@ async function navigate(path) {
   });
 }
 
-test('opens Monitoring with planned connections and no invented health results', () => {
+test('opens Monitoring and reports missing publication timestamps', async () => {
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
   expect(within(nav).getAllByRole('link')).toHaveLength(6);
   expect(within(nav).queryByRole('link', { name: 'Telegram', exact: true })).not.toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Source health' });
-  expect(within(sources).getAllByText('Not connected')).toHaveLength(7);
-  expect(screen.getByText('No freshness checks have run', { exact: false })).toBeInTheDocument();
+  expect(within(sources).getAllByText('Not connected')).toHaveLength(5);
+  expect(await within(sources).findAllByText('No timestamp')).toHaveLength(2);
+  expect(screen.getByText('Run history requires collector telemetry.')).toBeInTheDocument();
 });
 
 test('supports every workspace and sports deep links, including hash navigation', async () => {
@@ -76,4 +77,95 @@ test('sidebar links change workspaces and alerts open without connecting a sourc
   expect(screen.getByRole('dialog', { name: 'Alerts' })).toBeInTheDocument();
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+
+test('Raw Bet Data filters confirmed bets and downloads all matching rows across pages', async () => {
+  const fill = { partnerId: 'a', partnerName: 'Partner A', betDate: '2026-11-04', sport: 'hockey', league: 'NCAA',
+    selection: 'Over 5.5, incl "OT"', event: '=1+1', stake: 100, odds: -110, status: 'LOSS', settledProfit: -100 };
+  const bets = [
+    ...Array.from({ length: 51 }, (_, index) => ({ ...fill, id: `fill-${index}`, betId: `BOS${String(index).padStart(3, '0')}` })),
+    { ...fill, id: 'older', betId: 'OLD123', betDate: '2026-11-03' },
+    { ...fill, id: 'other-partner', betId: 'PAR123', partnerId: 'b', partnerName: 'Partner B' },
+    { ...fill, id: 'other-sport', betId: 'LOL123', sport: 'lol' },
+    { ...fill, id: 'other-league', betId: 'NHL123', league: 'NHL' },
+    { ...fill, id: 'later', betId: 'NEW123', betDate: '2026-11-05' },
+  ];
+  const defaultFetch = fetch.getMockImplementation();
+  fetch.mockImplementation((url, ...args) => url === '/api/confirms/bets?includeIncomplete=true'
+    ? Promise.resolve({ ok: true, json: async () => ({ bets }) }) : defaultFetch(url, ...args));
+  const createObjectURL = jest.fn(() => 'blob:bet-export');
+  const revokeObjectURL = jest.fn();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  URL.createObjectURL = createObjectURL;
+  URL.revokeObjectURL = revokeObjectURL;
+  const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  try {
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/#/bets');
+    render(<App />);
+    await user.click(screen.getByRole('tab', { name: 'Raw Bet Data' }));
+    const table = await screen.findByRole('table', { name: 'Raw bet data' });
+    await screen.findByRole('button', { name: 'Download CSV (56)' });
+    expect(screen.getByRole('tab', { name: 'Raw Bet Data' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.change(screen.getByLabelText('From (ET)'), { target: { value: '2026-11-04' } });
+    fireEvent.change(screen.getByLabelText('Through (ET)'), { target: { value: '2026-11-04' } });
+    await user.selectOptions(screen.getByLabelText('Partner'), 'a');
+    await user.selectOptions(screen.getByLabelText('Sport'), 'hockey');
+    await user.selectOptions(screen.getByLabelText('League'), 'NCAA');
+    expect(within(table).getAllByRole('row')).toHaveLength(51);
+    expect(within(table).queryByText('BOS050')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Download CSV (51)' }));
+    const csv = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsText(createObjectURL.mock.calls[0][0]);
+    });
+    expect(click.mock.instances[0].download).toBe('raw-bet-data.csv');
+    expect(csv).toContain('"League"');
+    expect(csv).toContain('"NCAA"');
+    expect(csv).toContain('"BOS050"');
+    expect(csv).not.toMatch(/PAR123|OLD123|NHL123|LOL123|NEW123/);
+    expect(csv).toContain('"Over 5.5, incl ""OT"""');
+    expect(csv).toContain(`"'=1+1"`);
+    expect(csv).toContain(',-110,');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(within(table).getByText('BOS050')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByRole('button', { name: 'Download CSV (56)' })).toBeEnabled();
+  } finally {
+    click.mockRestore();
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  }
+});
+
+
+test('monitoring flags stale publications and counts distinct upcoming games by league', async () => {
+  const now = Date.now();
+  const game = { id: 'game-1', dateTime: new Date(now + 3600000).toISOString(), leagueName: 'NCAA',
+    winoddsfulltime: -150, away_winoddsfulltime: 150, goalie_team: 'Home goalie' };
+  fetch.mockImplementation(async url => ({ ok: true, json: async () => url === '/api/monitoring/feeds' ? {
+    feeds: [
+      { id: 'hockey-odds', lastRunAt: new Date(now).toISOString(), lastSuccessAt: new Date(now - 20 * 60000).toISOString(), status: 'failed' },
+      { id: 'ep-rosters', lastRunAt: new Date(now - 7 * 86400000).toISOString(), lastSuccessAt: new Date(now - 7 * 86400000).toISOString(), status: 'success' },
+    ],
+  } : url === '/api/hockey/future-games' ? {
+    games: [game, { ...game, HomeML: -155, AwayML: 135, goalie_opp: 'Away goalie' },
+      { ...game, id: 'past', dateTime: new Date(now - 3600000).toISOString() }, { ...game, id: 'game-2', winoddsfulltime: null }],
+    source: { updatedAt: new Date(now - 48 * 3600000).toISOString() },
+  } : { games: [], source: { updatedAt: new Date(now).toISOString() } } }));
+  render(<App />);
+  expect(await screen.findByText(/Last published/)).toHaveTextContent('Hockey · Stale output');
+  const coverage = await screen.findByRole('table', { name: 'Hockey coverage by league' });
+  const cells = within(coverage).getAllByRole('cell').map(cell => cell.textContent);
+  expect(cells).toEqual(['2', '1 / 2', '1 / 2', '1 / 2']);
+  expect(within(screen.getByRole('table', { name: 'League of Legends source inventory' })).getByText('GRID')).toBeInTheDocument();
+  expect(await screen.findByText('No upcoming matches in this publication.')).toBeInTheDocument();
+  const freshness = within(screen.getByRole('table', { name: 'Data freshness by feed' }));
+  expect(freshness.getByRole('row', { name: /^Odds scraper / })).toHaveTextContent('Check run');
+  expect(freshness.getByRole('row', { name: /^Elite Prospects current rosters / })).toHaveTextContent('CurrentWeekly');
+  expect(freshness.getByRole('row', { name: /^PandaScore Minute frames / })).toHaveTextContent('No telemetry');
 });

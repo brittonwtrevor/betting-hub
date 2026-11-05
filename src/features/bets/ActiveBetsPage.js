@@ -5,6 +5,9 @@ import { usePartners } from '../partners/usePartners';
 import { useSends } from './SendsContext';
 import { formatOdds, gameDescription } from './markets';
 import ConfirmsInbox from './ConfirmsInbox';
+import RawBetData from './RawBetData';
+
+const tabs = { sends: 'Sends', confirms: 'Confirms', raw: 'Raw Bet Data' };
 
 function SendCard({ draft, registeredPartners, partnersReady, onSave, onSend, onRemove }) {
   const [edited, setEdited] = useState(draft);
@@ -67,8 +70,10 @@ export default function ActiveBetsPage({ tab = 'sends' }) {
   }, [load]);
   useEffect(() => { if (tab === 'sends') refresh(); }, [refresh, tab]);
   return <>
-    <div className="sends-toolbar"><div className="segments" role="tablist" aria-label="Active Bets">{['sends', 'confirms'].map(value => <button key={value} type="button" className={`segment${tab === value ? ' active' : ''}`} role="tab" aria-selected={tab === value} aria-controls={`${value}-panel`} id={`${value}-tab`} onClick={() => { window.location.hash = value === 'confirms' ? '/bets?tab=confirms' : '/bets'; }}>{value === 'sends' ? 'Sends' : 'Confirms'}</button>)}</div>{tab === 'sends' && <button type="button" className="button button-secondary" onClick={() => { void refresh(); void partnerRegistry.reload(); }} disabled={loading || partnerRegistry.loading}>{loading || partnerRegistry.loading ? 'Loading…' : 'Refresh Sends'}</button>}</div>
-    {tab === 'confirms' ? <div id="confirms-panel" role="tabpanel" aria-labelledby="confirms-tab"><ConfirmsInbox /></div> : <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
+    <div className="sends-toolbar"><div className="segments" role="tablist" aria-label="Active Bets">{Object.keys(tabs).map(value => <button key={value} type="button" className={`segment${tab === value ? ' active' : ''}`} role="tab" aria-selected={tab === value} aria-controls={`${value}-panel`} id={`${value}-tab`} onClick={() => { window.location.hash = value === 'sends' ? '/bets' : `/bets?tab=${value}`; }}>{tabs[value]}</button>)}</div>{tab === 'sends' && <button type="button" className="button button-secondary" onClick={() => { void refresh(); void partnerRegistry.reload(); }} disabled={loading || partnerRegistry.loading}>{loading || partnerRegistry.loading ? 'Loading…' : 'Refresh Sends'}</button>}</div>
+    {tab === 'raw' && <div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab"><RawBetData /></div>}
+    {tab === 'confirms' && <div id="confirms-panel" role="tabpanel" aria-labelledby="confirms-tab"><ConfirmsInbox /></div>}
+    {tab === 'sends' && <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
       {error && <p role="alert" className="sends-error">{error}</p>}
       {partnerRegistry.error && <p role="alert" className="sends-error">{partnerRegistry.error} Refresh Sends to reload partner destinations.</p>}
       {loading ? <p role="status">Loading Sends…</p> : drafts?.length ? drafts.map(draft => <SendCard key={draft.id} draft={draft} registeredPartners={partnerRegistry.partners} partnersReady={!partnerRegistry.loading && !partnerRegistry.error} onSave={save} onSend={send} onRemove={remove} />) : !error && <Panel><EmptyState icon="inbox" title="No Sends drafts yet" description="Select a game in Sports Dashboards or Trading Dashboard, check the markets you want, and add them here." /></Panel>}

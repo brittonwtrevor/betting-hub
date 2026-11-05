@@ -20,12 +20,10 @@ export function cellText(row, column) {
   return String(value);
 }
 
-export function filterGames(games, columns, { league = 'ALL', search = '', from = '', to = '', homeB2b = 'ALL', awayB2b = 'ALL', goalieFilters = false, minGames = 1, maxLastGame = 40, filters = {} } = {}) {
+export function filterGames(games, columns, { league = 'ALL', search = '', from = '', to = '', goalieFilters = false, minGames = 1, maxLastGame = 40, filters = {} } = {}) {
   const term = search.trim().toLowerCase();
   return games.filter(row => {
     if (league !== 'ALL' && row.leagueName !== league) return false;
-    if (homeB2b !== 'ALL' && row.team_b2b_type !== homeB2b) return false;
-    if (awayB2b !== 'ALL' && row.opp_b2b_type !== awayB2b) return false;
     if ((from || to)) {
       const day = gameDate(row);
       if (!day || (from && day < from) || (to && day > to)) return false;

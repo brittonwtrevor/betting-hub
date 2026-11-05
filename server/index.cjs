@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -139,6 +139,14 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save partners. Please try again.' });
       }
     }
+    if (pathname === '/api/confirms/bets') {
+      if (!['GET', 'HEAD'].includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD' });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      if (!confirmsService) return json(503, { message: 'Bet report storage is not configured yet.' });
+      const includeIncomplete = new URLSearchParams((request.url || '').split('?')[1]).get('includeIncomplete') === 'true';
+      try { return json(200, { bets: await confirmsService.listReportBets({ includeIncomplete }) }); }
+      catch (error) { return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load confirmed bet data. Try refreshing.' }); }
+    }
     const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
     if (confirmRoute) {
       const [, sourceId, action, betId] = confirmRoute;
@@ -210,6 +218,12 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD' });
     }
 
+    if (pathname === '/api/monitoring/feeds') {
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      if (!feedHealthService) return json(503, { message: 'Feed monitoring is unavailable.' });
+      try { return json(200, { feeds: await feedHealthService.list() }); }
+      catch { return json(503, { message: 'Unable to read feed telemetry.' }); }
+    }
     if (pathname === '/api/hockey/future-games') {
       try {
         if (!hockeyGamesService) throw Object.assign(new Error(), { code: 'DB_NOT_CONFIGURED' });
@@ -275,6 +289,7 @@ if (require.main === module) {
   try {
     const development = process.argv.includes('--dev');
     const upcomingGamesService = require('./lol.cjs').createUpcomingGamesService();
+    const feedHealthService = require('./feed-health.cjs').createFeedHealthService();
     const hockeyGamesService = require('./hockey.cjs').createHockeyGamesService();
     const sendsService = require('./sends.cjs').createSendsService();
     const partnersService = require('./partners.cjs').createPartnersService();
@@ -286,7 +301,7 @@ if (require.main === module) {
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService,
+      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
@@ -298,7 +313,7 @@ if (require.main === module) {
       server.close();
       await confirmsService.close();
       await telegramReceiver.close();
-      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close()]);
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close()]);
     }
     process.once('SIGTERM', () => { void shutdown(); });
     process.once('SIGINT', () => { void shutdown(); });

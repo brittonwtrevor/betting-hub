@@ -212,3 +212,14 @@ h1 { font-size: 29px; line-height: 1.2; font-weight: 650; letter-spacing: -.9px;
 .partner-channel-summary p { font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
 .partner-channel-note { font-size: 10px; color: #8290a5; margin-top: 10px; line-height: 1.6; }
 .partner-channel .partner-form { margin-top: 12px; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+
+.monitoring-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 20px; align-items: start; }
+.monitoring-models .data-table th[scope="row"] { text-align: left; }
+.monitoring-models .data-table td.monitoring-input-detail { white-space: normal; min-width: 210px; }
+.monitoring-issues { margin: 0; padding-left: 40px; font-size: 12px; line-height: 1.7; }
+
+.feed-freshness th[scope="row"], .feed-freshness th[scope="rowgroup"] { text-align: left; }
+.feed-freshness .feed-group { background: #f4f6fa; }
+.badge-feed-green { background: #e4f3e8; color: #225c38; }
+.badge-feed-yellow { background: #fff2c6; color: #715100; }
+.badge-feed-red { background: #fce8e8; color: #922828; }

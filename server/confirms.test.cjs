@@ -32,6 +32,18 @@ function fixture(options = {}) {
     } else if (sql.startsWith('SELECT * FROM hub_confirm_sources WHERE id')) return [[data.sources[p[0]]].filter(Boolean).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_sources WHERE')) return [Object.values(data.sources).filter(row => row.status === 'pending' || row.status === 'error' && row.attempts < 3 && row.retry_at_ms <= p[0] || row.status === 'processing' && row.lease_until_ms <= p[1]).slice(0, 5).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_sources ORDER')) return [Object.values(data.sources).map(copy)];
+    else if (sql.startsWith('SELECT id, bet_id, partner_id')) {
+      assert.match(sql, /WHERE deleted_at IS NULL/);
+      const completeOnly = sql.includes('risk IS NOT NULL');
+      return [Object.values(data.bets).flatMap(row => {
+        const bet = JSON.parse(row.payload);
+        if (bet.deletedAt || (completeOnly && !bet.complete)) return [];
+        return [{ id: row.id, bet_id: bet.betId, partner_id: bet.partnerId, partner_name: bet.partnerName,
+          bet_date: bet.betDate, bet_at: bet.betAt, game: bet.game, team: bet.team, bet: bet.bet, sport: bet.sport,
+          risk: bet.risk?.toFixed(2) ?? null, odds: bet.odds, grade: bet.grade, league: bet.league,
+          partial_return: bet.partialReturn?.toFixed(2) ?? null, pl: bet.pl?.toFixed(2) ?? null, graded_at: bet.gradedAt }];
+      })];
+    }
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')) return [Object.values(data.bets).filter(row => p.includes(row.source_id)).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id')) return [Object.values(data.bets).filter(row => row.source_id === p[0]).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE id')) return [[data.bets[p[0]]].filter(Boolean).map(copy)];
@@ -288,4 +300,31 @@ test('missing fields create review rows and a competing parser instance makes no
   const competing = fixture({ acquired: 0 });
   await competing.service.tick();
   assert.equal(competing.parseCalls, 0);
+});
+
+
+test('partner reports read complete fills, reflect grades and omit deleted bets', async () => {
+  const f = fixture({ extraction: { bets: [extraction.bets[0], { ...extraction.bets[0], risk: 200, odds: 150 },
+    { ...extraction.bets[0], risk: null }], issues: [] } });
+  await f.service.tick();
+  const pending = await f.service.listReportBets();
+  assert.equal(pending.length, 2);
+  assert.deepEqual(pending.map(bet => [bet.betId, bet.partnerId, bet.stake, bet.odds, bet.status, bet.settledProfit]), [
+    ['HAN187', 'trevor', 1, -110, 'UNGRADED', null], ['HAN187', 'trevor', 200, 150, 'UNGRADED', null],
+  ]);
+  assert.notEqual(pending[0].id, pending[1].id);
+  assert.equal(pending[0].telegramChatId, undefined);
+  const raw = await f.service.listReportBets({ includeIncomplete: true });
+  assert.equal(raw.length, 3);
+  assert.equal(raw[0].sport, 'lol');
+  assert.equal(raw[0].league, 'Worlds');
+  assert.equal(raw[2].stake, null);
+  const [first, second] = (await f.service.list()).sources[0].bets;
+  const win = await f.service.update(second.id, { ...second, grade: 'WIN' });
+  await f.service.update(first.id, { ...first, grade: 'LOSS' });
+  assert.deepEqual((await f.service.listReportBets()).map(bet => bet.settledProfit), [-1, 300]);
+  await f.service.remove(win.id, win);
+  assert.deepEqual((await f.service.listReportBets()).map(bet => bet.id), [first.id]);
+  assert.ok((await f.service.listReportBets({ includeIncomplete: true })).every(bet => bet.id !== win.id));
+  assert.equal(f.parseCalls, 1);
 });

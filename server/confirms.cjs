@@ -173,6 +173,22 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
       notificationTimer = setInterval(() => { void notificationTick(); }, 10000); notificationTimer.unref?.();
       void tick(); void notificationTick();
     },
+    async listReportBets({ includeIncomplete = false } = {}) {
+      const db = await database();
+      const [rows] = await db.query(`SELECT id, bet_id, partner_id, partner_name, bet_date, bet_at,
+        game, team, bet, sport, league, risk, odds, grade, partial_return, pl, graded_at
+        FROM hub_confirm_bets
+        WHERE deleted_at IS NULL${includeIncomplete ? '' : ` AND risk IS NOT NULL AND odds IS NOT NULL
+          AND game <> '' AND team <> '' AND bet <> ''`}
+        ORDER BY bet_date DESC, bet_at DESC, id`);
+      return rows.map(row => ({
+        id: row.id, betId: row.bet_id, partnerId: row.partner_id, partnerName: row.partner_name,
+        betDate: row.bet_date, placedAt: row.bet_at, event: row.game, selection: row.bet, team: row.team,
+        sport: row.sport, league: row.league, stake: row.risk === null ? null : Number(row.risk), odds: row.odds,
+        status: row.grade, partialReturn: row.partial_return === null ? null : Number(row.partial_return),
+        settledProfit: row.pl === null ? null : Number(row.pl), gradedAt: row.graded_at,
+      }));
+    },
     async list() {
       const receiver = await sync();
       const db = await database();

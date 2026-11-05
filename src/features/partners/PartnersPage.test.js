@@ -16,12 +16,15 @@ const payments = [
   { id: 'b-payment', partnerId: 'b', amount: 40, direction: 'Sent', reference: 'B transfer', status: 'Complete' },
 ];
 let persisted;
+let reportedBets;
 const response = (body, ok = true) => ({ ok, json: async () => body });
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => 'new-partner' } });
   persisted = [];
+  reportedBets = [];
   global.fetch = jest.fn(async (url, options = {}) => {
+    if (url === '/api/confirms/bets') return response({ bets: reportedBets });
     const input = options.body && JSON.parse(options.body);
     if (url.endsWith('/import')) {
       for (const partner of input.partners) if (!persisted.some(item => item.id === partner.id)) persisted.push({ ...partner, revision: 1 });
@@ -177,4 +180,29 @@ test('rejects an invalid channel before saving the partner', async () => {
   await user.click(screen.getByRole('button', { name: 'Create tab' }));
   expect(screen.getByRole('alert')).toHaveTextContent('Use an @channel username');
   expect(window.localStorage.getItem('betting-hub.partner-names.v1')).toBeNull();
+});
+
+
+test('shows Telegram fills under the correct partner and reloads saved grades and P/L', async () => {
+  persisted = [{ id: 'a', name: 'Partner A', legacyIds: ['old-a'] }, { id: 'b', name: 'Partner B' }];
+  const fill = { id: 'fill-1', betId: 'BOS145', partnerId: 'old-a', betDate: '2026-11-04', event: 'Boston vs Toronto', team: 'Boston', selection: 'Moneyline', sport: 'hockey', stake: 200, odds: 150, status: 'UNGRADED', settledProfit: null };
+  reportedBets = [fill, { ...fill, id: 'fill-2', partnerId: 'b', betId: 'TOR145' }];
+  render(<PartnersPage />);
+  const tabs = screen.getByRole('group', { name: 'Partners' });
+  fireEvent.click(await within(tabs).findByRole('button', { name: 'Partner A' }));
+  const table = screen.getByRole('table', { name: 'Bet reports' });
+  const pending = (await within(table).findByText('BOS145')).closest('tr');
+  expect(pending).toHaveTextContent('Boston vs Toronto / Boston / Moneyline');
+  expect(pending).toHaveTextContent('$200.00');
+  expect(pending).toHaveTextContent('+150');
+  expect(pending).toHaveTextContent('Pending');
+  expect(within(table).queryByText('TOR145')).not.toBeInTheDocument();
+  reportedBets = [{ ...fill, status: 'WIN', settledProfit: 300 }, reportedBets[1]];
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh partners' }));
+  expect(await within(table).findByText('$300.00')).toBeInTheDocument();
+  expect(within(table).getByText('WIN')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Balances', exact: true }));
+  const balances = screen.getByRole('table', { name: 'Partner balances' });
+  expect(within(balances).getByText('$300.00')).toBeInTheDocument();
+  expect(within(balances).getAllByText('—')).toHaveLength(4);
 });

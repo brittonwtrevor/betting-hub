@@ -15,19 +15,26 @@ test('uses Eastern dates across midnight and preserves numeric odds, edges and m
   expect(filterGames([sample], columns, { from: '2026-11-05' })).toHaveLength(0);
   expect(filterGames([sample], columns, { goalieFilters: true, minGames: 9 })).toHaveLength(0);
   expect(filterGames([sample], columns, { goalieFilters: true, maxLastGame: 1 })).toHaveLength(0);
-  expect(filterGames([sample], columns, { awayB2b: 'no-b2b' })).toHaveLength(0);
   const games = [{ edge: null }, { edge: 0.09 }, { edge: 0.1 }];
   expect(sortFutureGames(games, { key: 'edge', type: 'edge' }, 'desc').map(row => row.edge)).toEqual([0.1, 0.09, null]);
 });
 
-test('loads hockey data, filters by league, and refreshes from the server', async () => {
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ columns, games: [sample, { ...sample, id: '2', leagueName: 'OHL', homeTeamName: 'London' }], source: {} }) });
+test('defaults to men’s NCAA and lets the user change or clear the league', async () => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ columns, games: [sample, { ...sample, id: '2', leagueName: 'OHL', homeTeamName: 'London' }, { ...sample, id: '3', leagueName: 'NCAA (W)', homeTeamName: 'Wisconsin Women' }], source: {} }) });
   render(<HockeyFutureGames />);
   expect(await screen.findByText('Boston University')).toBeInTheDocument();
-  expect(screen.getByText('London')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('League'), { target: { value: 'NCAA' } });
+  const league = screen.getByLabelText('League');
+  expect(league).toHaveDisplayValue('NCAA (Men)');
   expect(screen.queryByText('London')).not.toBeInTheDocument();
+  expect(screen.queryByText('Wisconsin Women')).not.toBeInTheDocument();
+  fireEvent.change(league, { target: { value: 'NCAA (W)' } });
+  expect(screen.getByText('Wisconsin Women')).toBeInTheDocument();
+  expect(screen.queryByText('Boston University')).not.toBeInTheDocument();
   fireEvent.click(screen.getByText('Refresh data'));
+  expect(await screen.findByText('Wisconsin Women')).toBeInTheDocument();
+  expect(league).toHaveValue('NCAA (W)');
+  fireEvent.click(screen.getByText('Clear filters'));
+  expect(screen.getByText('London')).toBeInTheDocument();
   await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
   expect(global.fetch.mock.calls[0][0]).toBe('/api/hockey/future-games');
 });

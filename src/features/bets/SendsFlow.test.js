@@ -146,6 +146,8 @@ test('clicking a hockey row offers hockey markets and saves playable Sends with 
   window.history.replaceState(null, '', '/#/sports/hockey');
   const user = userEvent.setup();
   render(<App />);
+  const nhl = await screen.findByRole('option', { name: 'NHL' });
+  await user.selectOptions(screen.getByLabelText('League'), nhl);
   // A click on any ordinary table cell opens the same picker as the team button.
   await user.click(await screen.findByText('Toronto'));
   const picker = screen.getByRole('dialog', { name: 'Markets · Boston Bruins vs Toronto' });

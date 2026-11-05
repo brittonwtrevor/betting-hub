@@ -40,7 +40,7 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
       <td><span aria-label={`Bet ID for ${bet.id}`}>{edited.betId || '—'}</span></td>
       <td title={bet.partnerId ? `Partner ID: ${bet.partnerId}` : undefined}>{bet.partnerName || '—'}<small>{bet.telegramChatName}</small></td>
       <td><span aria-label={`Bet date (ET) for ${bet.id}`}>{edited.betDate || '—'}</span><small>Reply: {eastern(bet.betAt)} ET</small></td>
-      <td className="confirmation-game"><span aria-label={`Game for ${bet.id}`}>{edited.game || '—'}</span>{bet.gameAt && <small>Game: {eastern(bet.gameAt)} ET</small>}</td><td>{input('team', 'Team', 200, 'text')}</td><td>{input('bet', 'Bet', 300, 'text')}</td>
+      <td className="confirmation-game"><span aria-label={`Game for ${bet.id}`}>{edited.game || '—'}</span>{bet.league && <small>{bet.league}</small>}{bet.gameAt && <small>Game: {eastern(bet.gameAt)} ET</small>}</td><td>{input('team', 'Team', 200, 'text')}</td><td>{input('bet', 'Bet', 300, 'text')}</td>
       <td>{input('risk', 'Risk', 16, 'decimal')}</td><td>{input('odds', 'Odds', 16, 'text')}</td>
       <td><select aria-label={`Grade for ${bet.id}`} value={edited.grade} disabled={busy} onChange={event => change('grade', event.target.value)}>{grades.map(grade => <option key={grade} value={grade}>{grade === 'UNGRADED' ? 'Ungraded' : grade}</option>)}</select></td>
       <td>{edited.grade === 'PARTRETURN' ? input('partialReturn', 'PARTRETURN net P/L', 16, 'text') : '—'}</td>

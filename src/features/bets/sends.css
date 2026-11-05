@@ -69,3 +69,9 @@
 .confirm-profit { color: #24754c; }
 .confirm-loss { color: #a52d38; }
 @media (max-width: 760px) { .send-card-header, .send-card-details, .send-card-footer { padding-left: 14px; padding-right: 14px; } .sends-notice { font-size: 10px; gap: 9px; } }
+
+.raw-bet-controls { padding-top: 14px; }
+.raw-bet-date { display: flex; flex-direction: column; gap: 6px; font-size: 11px; }
+.raw-bet-date input { height: 35px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); }
+.raw-bet-pagination, .raw-bet-pagination > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.raw-bet-pagination { justify-content: space-between; padding: 12px 20px; color: var(--muted); font-size: 12px; }

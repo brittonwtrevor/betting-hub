@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$FEED_MONITOR_NODE" "$(dirname "$0")/../feed-monitor.cjs" rscript "$@"

@@ -1,19 +1,39 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { normalizeTelegramChannel } from './telegram';
 import { usePartners } from './usePartners';
 import { EmptyState, InfoNote, Panel, SearchField, Segments, StatGrid } from '../../components/ui';
 
 const views = {
   balances: { title: 'Partner balances', columns: ['Partner', 'Open exposure', 'Settled P/L', 'Your share', 'Payments', 'Owed to you', 'Owed to partner'], empty: 'No partner balances yet' },
-  reports: { title: 'Bet reports', columns: ['Partner', 'Placed (ET)', 'Event / Selection', 'Sport', 'Stake', 'Odds', 'Status', 'Settled P/L', 'Your share'], empty: 'No partner bets yet' },
+  reports: { title: 'Bet reports', columns: ['Partner', 'Bet ID', 'Bet date (ET)', 'Event / Selection', 'Sport', 'Risk', 'Odds', 'Grade', 'Net P/L', 'Your share'], empty: 'No partner bets yet' },
   payments: { title: 'Payments', columns: ['Partner', 'Date (ET)', 'Direction', 'Amount', 'Reference', 'Status'], empty: 'No payments recorded' },
 };
 const currency = value => Number.isFinite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
 const date = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 // Connected records can supply published balances without assuming how partners fund bets.
-export default function PartnersPage({ partners: connectedPartners = [], bets = [], payments = [] }) {
+export default function PartnersPage({ partners: connectedPartners = [], bets, payments = [] }) {
   const registry = usePartners();
   const localPartners = registry.partners;
+  const [report, setReport] = useState({ bets: [], loading: bets === undefined, error: '' });
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => {
+    if (bets !== undefined) return;
+    const controller = new AbortController();
+    let active = true;
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    setReport(current => ({ ...current, loading: true, error: '' }));
+    (async () => {
+      try {
+        const response = await fetch('/api/confirms/bets', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok || !Array.isArray(result.bets)) throw new Error(result.message || 'Unable to load partner bet reports.');
+        if (active) setReport({ bets: result.bets, loading: false, error: '' });
+      } catch (error) {
+        if (active) setReport(current => ({ ...current, loading: false, error: error.name === 'AbortError' ? 'Loading partner bet reports timed out.' : error.message }));
+      } finally { clearTimeout(timeout); }
+    })();
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
+  }, [bets, refresh]);
   const [partnerId, setPartnerId] = useState('all');
   const [tab, setTab] = useState('balances');
   const [query, setQuery] = useState('');
@@ -32,9 +52,26 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
   const selected = partners.find(partner => partner.id === partnerId);
   const scopedPartners = selected ? [selected] : partners;
   const matchesPartner = record => !selected || record.partnerId === selected.id;
-  const scopedBets = bets.filter(matchesPartner);
+  const findPartner = id => partners.find(partner => partner.id === id || partner.legacyIds?.includes(id));
+  const reportBets = (bets ?? report.bets).map(bet => ({ ...bet, partnerId: findPartner(bet.partnerId)?.id ?? bet.partnerId }));
+  const scopedBets = reportBets.filter(matchesPartner);
   const scopedPayments = payments.filter(matchesPartner);
-  const partnerName = id => partners.find(partner => partner.id === id)?.name || 'Unknown partner';
+  const partnerName = (id, fallback) => findPartner(id)?.name || fallback || 'Unknown partner';
+  const reportTotals = new Map();
+  for (const bet of reportBets) {
+    if (!bet.betId) continue;
+    const totals = reportTotals.get(bet.partnerId) ?? { openCents: 0, settledCents: 0 };
+    if (bet.status === 'UNGRADED') totals.openCents += Math.round(bet.stake * 100);
+    if (Number.isFinite(bet.settledProfit)) totals.settledCents += Math.round(bet.settledProfit * 100);
+    reportTotals.set(bet.partnerId, totals);
+  }
+  const balance = (partner, key) => {
+    const totals = reportTotals.get(partner.id);
+    if (partner[key] != null || !totals) return partner[key];
+    if (key === 'openExposure') return totals.openCents / 100;
+    if (key === 'settledProfit') return totals.settledCents / 100;
+    return undefined;
+  };
   const choosePartner = id => { setPartnerId(id); setEditingChannel(false); setChannelError(''); setQuery(''); setTab(id === 'all' ? 'balances' : 'reports'); };
   async function addPartner(event) {
     event.preventDefault();
@@ -62,14 +99,18 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
     catch (failure) { setChannelError(failure.message); }
     finally { setSaving(false); }
   }
-  const sum = key => scopedPartners.length && scopedPartners.every(partner => Number.isFinite(partner[key])) ? scopedPartners.reduce((total, partner) => total + partner[key], 0) : undefined;
+  const sum = key => scopedPartners.length && scopedPartners.every(partner => Number.isFinite(balance(partner, key))) ? scopedPartners.reduce((total, partner) => total + balance(partner, key), 0) : undefined;
   const view = views[tab];
   const rows = tab === 'balances' ? scopedPartners.map(partner => ({
     id: partner.id, partnerId: partner.id,
-    cells: [partner.name, currency(partner.openExposure), currency(partner.settledProfit), currency(partner.yourShare), currency(partner.paymentsTotal), currency(partner.owedToYou), currency(partner.owedToPartner)],
+    cells: [partner.name, currency(balance(partner, 'openExposure')), currency(balance(partner, 'settledProfit')), currency(partner.yourShare), currency(partner.paymentsTotal), currency(partner.owedToYou), currency(partner.owedToPartner)],
   })) : tab === 'reports' ? scopedBets.map(bet => ({
     id: bet.id, partnerId: bet.partnerId,
-    cells: [partnerName(bet.partnerId), date(bet.placedAt), [bet.event, bet.selection].filter(Boolean).join(' / ') || '—', bet.sport || '—', currency(bet.stake), bet.odds ?? '—', bet.status || '—', currency(bet.settledProfit), currency(bet.yourShare)],
+    cells: [partnerName(bet.partnerId, bet.partnerName), bet.betId || '—', bet.betDate || date(bet.placedAt),
+      [bet.event, bet.team && bet.team !== 'Match' ? bet.team : '', bet.selection].filter(Boolean).join(' / ') || '—',
+      bet.sport === 'lol' ? 'LoL' : bet.sport === 'hockey' ? 'Hockey' : bet.sport || '—',
+      currency(bet.stake), Number.isFinite(bet.odds) && bet.odds > 0 ? `+${bet.odds}` : bet.odds ?? '—',
+      bet.status === 'UNGRADED' ? 'Pending' : bet.status || '—', currency(bet.settledProfit), currency(bet.yourShare)],
   })) : scopedPayments.map(payment => ({
     id: payment.id, partnerId: payment.partnerId,
     cells: [partnerName(payment.partnerId), date(payment.date), payment.direction || '—', currency(payment.amount), payment.reference || '—', payment.status || '—'],
@@ -78,8 +119,10 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
   return <>
     <div className="partner-toolbar">
       <Segments label="Partners" items={[{ value: 'all', label: 'All Partners' }, ...partners.map(partner => ({ value: partner.id, label: partner.name }))]} value={partnerId} onChange={choosePartner} />
-      <div><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={registry.reload}>Refresh partners</button><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { setAdding(!adding); setEditingChannel(false); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button></div>
+      <div><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { void registry.reload(); setRefresh(value => value + 1); }}>Refresh partners</button><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { setAdding(!adding); setEditingChannel(false); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button></div>
     </div>
+    {bets === undefined && report.loading && <p role="status">Loading partner bets…</p>}
+    {bets === undefined && report.error && <p role="alert" className="sends-error">{report.error} Use Refresh partners to try again.</p>}
     {registry.loading && <p role="status">Loading saved partners…</p>}
     {registry.error && <p role="alert" className="sends-error">{registry.error} Previously loaded partners remain available.</p>}
     {adding && <form id="add-partner" className="partner-form" onSubmit={addPartner}>
@@ -109,8 +152,8 @@ export default function PartnersPage({ partners: connectedPartners = [], bets = 
     <Panel title={`${selected ? `${selected.name} · ` : ''}${view.title}`} description={selected ? 'Bets, agreed shares, and payments for this partner.' : 'Select a partner name to open their detailed ledger.'}>
       <div className="panel-controls"><Segments label="Partner accounting views" items={[{ value: 'balances', label: 'Balances' }, { value: 'reports', label: 'Bet reports' }, { value: 'payments', label: 'Payments' }]} value={tab} onChange={setTab} /><SearchField label="Search partner records" placeholder="Search partners or records…" value={query} onChange={setQuery} /></div>
       <div className="table-scroll"><table className="data-table" aria-label={view.title}><thead><tr>{view.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>
-        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={view.columns[index]}>{index === 0 ? <button type="button" className="partner-link" onClick={() => choosePartner(row.partnerId)}>{cell}</button> : cell}</td>)}</tr>)}
-        {!filtered.length && <tr><td colSpan={view.columns.length}><EmptyState icon="users" title={query ? 'No matching records' : view.empty} description={query ? 'Try another search.' : selected ? `Connected records for ${selected.name} will appear here.` : 'Add your partners to create their tabs, then connect their bets and payments.'} /></td></tr>}
+        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={view.columns[index]}>{index === 0 && findPartner(row.partnerId) ? <button type="button" className="partner-link" onClick={() => choosePartner(row.partnerId)}>{cell}</button> : cell}</td>)}</tr>)}
+        {!filtered.length && <tr><td colSpan={view.columns.length}><EmptyState icon="users" title={query ? 'No matching records' : view.empty} description={query ? 'Try another search.' : selected ? `Saved records for ${selected.name} will appear here.` : 'Saved partner records will appear here.'} /></td></tr>}
       </tbody></table></div>
     </Panel>
     <InfoNote>Balances will show agreed shares and recorded payments once connected. Missing amounts are shown as —.</InfoNote>

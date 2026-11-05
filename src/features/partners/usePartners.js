@@ -45,7 +45,7 @@ export function usePartners(enabled = true) {
   useEffect(() => { mounted.current = true; if (enabled) void reload(); return () => { mounted.current = false; }; }, [enabled, reload]);
   const save = async (input, existing) => {
     const { partner } = await request(existing?.revision ? `/${encodeURIComponent(existing.id)}` : '', existing?.revision ? 'PATCH' : 'POST', input);
-    if (mounted.current) setPartners(current => [...current.filter(item => item.id !== partner.id), partner].sort((a, b) => a.name.localeCompare(b.name)));
+    if (mounted.current) setPartners(current => [...current.filter(item => item.id !== partner.id), { ...partner, legacyIds: current.find(item => item.id === partner.id)?.legacyIds }].sort((a, b) => a.name.localeCompare(b.name)));
     return partner;
   };
   return { partners, loading, error, reload, save };
