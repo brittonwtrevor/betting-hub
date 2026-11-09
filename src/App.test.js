@@ -104,15 +104,19 @@ test('filters planned sources and opens accessible source details', async () => 
   expect(trigger).toHaveFocus();
 });
 
-test('sidebar links change workspaces and alerts open without connecting a source', async () => {
+test('sidebar links change workspaces and the mobile menu opens without a top bar', async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
   await waitFor(() => expect(document.title).toBe('Active Bets · Betting Hub'));
-  await user.click(screen.getByRole('button', { name: 'Open alerts' }));
-  expect(screen.getByRole('dialog', { name: 'Alerts' })).toBeInTheDocument();
+  expect(screen.queryByRole('banner')).not.toBeInTheDocument();
+  const menu = screen.getByRole('button', { name: 'Open navigation' });
+  await user.click(menu);
+  const dialog = screen.getByRole('dialog', { name: 'Your workspace' });
+  expect(within(dialog).getByRole('link', { name: 'Active Bets' })).toHaveAttribute('aria-current', 'page');
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(menu).toHaveFocus();
 });
 
 
