@@ -2,14 +2,14 @@
 
 A React workspace for betting operations, research, and reporting, hosted on DigitalOcean App Platform.
 
-Hockey Future Games now has a dedicated DigitalOcean-backed dashboard. See [hockey setup and pipeline refresh](docs/hockey-future-games.md) for the publisher and the combined runner that preserves the existing Shiny flow.
+Run `zsh RUNMODEL.txt` from this checkout to refresh and publish Hockey and League of Legends. See the [Betting Hub refresh runbook](docs/feed-monitoring.md) for the script order, individual jobs, and upload recovery. See [Hockey Future Games](docs/hockey-future-games.md) for publisher setup.
 
 ## Workspaces
 
 - **Monitoring:** planned sources, data freshness, model-to-hub delivery stages, run history, and attention items.
 - **Active Bets:** Sends draft cards with selected markets and individual play-to prices; Confirms extracts partner fills, supports field corrections, and grades each bet with persisted P/L.
-- **Trading Dashboard:** the combined game list, initially backed by League of Legends, with the same market-selection workflow as Sports Dashboards.
-- **Sports Dashboards:** Hockey, League of Legends, and NASCAR, each with its own research views.
+- **Trading Dashboard:** the combined game list, initially backed by League of Legends, with the same market-selection workflow as the sport pages.
+- **Hockey, League of Legends, and NASCAR:** direct sidebar links to each sport's research views.
 - **Partner Accounting:** All Partners overview and individual partner tabs with balances, bet reports, and payments. Select a partner tab or name in a ledger to drill in. Add partners with an optional Telegram channel username, `t.me` link (including private invite links), or negative chat ID. Select a partner to add, edit, or remove their channel later. Partner names and channel references persist in the current browser; saving them does not connect Telegram, send messages, or import bets. Bet/payment records and published balances remain awaiting connection and are never inferred from missing data.
 - **Analytics:** performance, date/sport/scope filters, breakdowns, and export placeholders.
 
@@ -17,7 +17,7 @@ The League of Legends dashboard reads published model outputs directly from Digi
 
 ## League of Legends: Upcoming Games
 
-Open **Sports Dashboards → League of Legends** (`#/sports/lol`). This reproduces only the Shiny app's Upcoming Games tab, using `defaultdb.TREVORFAIRS` instead of local CSV files. The existing LoL model publisher already writes this table; the hub only reads it.
+Open **League of Legends** from the sidebar (`#/sports/lol`). This reproduces only the Shiny app's Upcoming Games tab, using `defaultdb.TREVORFAIRS` instead of local CSV files. The existing LoL model publisher already writes this table; the hub only reads it.
 
 The view includes the 34 Shiny columns plus a leading series-format column, Team A's Map 1/BO3/BO5 prices and probabilities, totals, duration, both player lineups, league and column filters, search, sorting, and pagination (200 rows by default). Repeated map rows with identical lineups and predictions collapse into one match entry. Different lineups or predictions remain separate. BO1/BO3/BO5 is inferred from the count of distinct published map IDs per match before collapsing; unsupported counts show a dash. The corresponding XGB fair price and probability are shaded light grey. The last confirmed lineup filter defaults on, matching Shiny. The visible table shows Eastern Time. Series calculations retain Shiny's assumption of the same independent map win probability throughout the series.
 
@@ -38,7 +38,7 @@ The connection requires TLS with certificate verification. Set `LOL_DO_DB_SSL_CA
 
 ## Sends and market selection
 
-Click a LoL game row or its Team A name in Sports Dashboards or Trading Dashboard. A checklist lets you select markets separately for either team or the match: series ML, Map 1–5 winners, team kill totals over/under per map, map handicaps ±1.5/±2.5, total maps over/under, and match kill totals over/under per map. Markets outside a known series format are disabled.
+Click a LoL game row or its Team A name in League of Legends or Trading Dashboard. A checklist lets you select markets separately for either team or the match: series ML, Map 1–5 winners, team kill totals over/under per map, map handicaps ±1.5/±2.5, total maps over/under, and match kill totals over/under per map. Markets outside a known series format are disabled.
 
 **Add to Sends** creates a card under **Active Bets → Sends**. Enter an American play-to price for each market and a total/line for total markets. Blank fields are allowed while drafting. Select partners/groups from Partner Accounting and add notes in the last table row. **Save changes** saves without sending. **Send to Telegram** saves current edits and sends the bet ID, matchup, start time (ET), selected markets, play-to prices, and notes to each selected partner channel using the connected bot. Prices, totals, and valid destinations are required before sending. Delivery status is persisted per destination; retries skip identical messages already delivered, and only confirmed failures can be retried automatically. Unconfirmed delivery requires checking the partner chat. Sending a card does not place bets.
 

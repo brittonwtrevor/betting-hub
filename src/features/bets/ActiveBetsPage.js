@@ -76,7 +76,7 @@ export default function ActiveBetsPage({ tab = 'sends' }) {
     {tab === 'sends' && <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
       {error && <p role="alert" className="sends-error">{error}</p>}
       {partnerRegistry.error && <p role="alert" className="sends-error">{partnerRegistry.error} Refresh Sends to reload partner destinations.</p>}
-      {loading ? <p role="status">Loading Sends…</p> : drafts?.length ? drafts.map(draft => <SendCard key={draft.id} draft={draft} registeredPartners={partnerRegistry.partners} partnersReady={!partnerRegistry.loading && !partnerRegistry.error} onSave={save} onSend={send} onRemove={remove} />) : !error && <Panel><EmptyState icon="inbox" title="No Sends drafts yet" description="Select a game in Sports Dashboards or Trading Dashboard, check the markets you want, and add them here." /></Panel>}
+      {loading ? <p role="status">Loading Sends…</p> : drafts?.length ? drafts.map(draft => <SendCard key={draft.id} draft={draft} registeredPartners={partnerRegistry.partners} partnersReady={!partnerRegistry.loading && !partnerRegistry.error} onSave={save} onSend={send} onRemove={remove} />) : !error && <Panel><EmptyState icon="inbox" title="No Sends drafts yet" description="Select a game in Hockey, League of Legends, or Trading Dashboard, check the markets you want, and add them here." /></Panel>}
     </div>}
   </>;
 }

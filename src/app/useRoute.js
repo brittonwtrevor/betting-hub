@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { navigation, sports } from './navigation';
+import { navigation } from './navigation';
 
-const sportsPage = navigation.find(page => page.id === 'sports');
 const betsPage = navigation.find(page => page.id === 'bets');
 
 // Hash URLs survive refreshes with the existing DigitalOcean static server.
@@ -14,10 +13,7 @@ export function resolveRoute(hash) {
     const tab = new URLSearchParams(hash.split('?')[1] || '').get('tab');
     return { ...betsPage, tab: ['confirms', 'raw'].includes(tab) ? tab : 'sends' };
   }
-  if (path === '/sports') return { ...sportsPage, path, sportId: 'hockey' };
-  const sport = sports.find(item => path === `/sports/${item.id}`);
-  if (sport) return { ...sportsPage, path, sportId: sport.id };
-  const page = navigation.find(item => item.id !== 'sports' && item.path === path);
+  const page = navigation.find(item => item.path === (path === '/sports' ? '/sports/hockey' : path));
   return page || { id: 'not-found', path, label: 'Page not found', description: '' };
 }
 export default function useRoute() {

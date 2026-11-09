@@ -1,21 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { navigation, sports } from './navigation';
+import { navigation } from './navigation';
 import Icon from '../components/Icon';
 import Drawer from '../components/Drawer';
 function Navigation({ route, onNavigate, compact = false }) {
   return <nav className="main-navigation" aria-label="Main navigation">
     {!compact && <p className="nav-eyebrow">WORKSPACE</p>}
-    {navigation.map(item => <React.Fragment key={item.id}>
-      <a href={`#${item.path}`} className={`nav-link ${route.id === item.id ? 'active' : ''}`} title={compact ? item.label : undefined} aria-current={route.id === item.id ? 'page' : undefined} onClick={onNavigate}>
+    {navigation.map(item => {
+      const active = route.path === item.path;
+      return <a key={item.path} href={`#${item.path}`} className={`nav-link ${active ? 'active' : ''}`} title={compact ? item.label : undefined} aria-current={active ? 'page' : undefined} onClick={onNavigate}>
         <Icon name={item.icon} size={19} /><span className={compact ? 'sr-only' : undefined}>{item.label}</span>
-        {!compact && route.id === item.id && <span className="nav-active-dot" />}
-      </a>
-      {item.id === 'sports' && route.id === 'sports' && <div className="sport-navigation">
-        {sports.map(sport => <a key={sport.id} href={`#/sports/${sport.id}`} className={route.sportId === sport.id ? 'active' : ''} title={compact ? sport.label : undefined} aria-current={route.sportId === sport.id ? 'page' : undefined} onClick={onNavigate}>
-          {compact && <Icon name={sport.icon} size={18} />}<span className={compact ? 'sr-only' : undefined}>{sport.label}</span>
-        </a>)}
-      </div>}
-    </React.Fragment>)}
+        {!compact && active && <span className="nav-active-dot" />}
+      </a>;
+    })}
   </nav>;
 }
 export default function AppShell({ route, children }) {

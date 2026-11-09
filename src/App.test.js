@@ -2,7 +2,6 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
-import { navigation } from './app/navigation';
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
@@ -22,7 +21,7 @@ test('opens Monitoring and reports missing publication timestamps', async () => 
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
-  expect(within(nav).getAllByRole('link')).toHaveLength(7);
+  expect(within(nav).getAllByRole('link')).toHaveLength(9);
   expect(within(nav).queryByRole('link', { name: 'Telegram', exact: true })).not.toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Source health' });
   expect(within(sources).getAllByText('Not connected')).toHaveLength(5);
@@ -31,9 +30,13 @@ test('opens Monitoring and reports missing publication timestamps', async () => 
 });
 
 test('supports every workspace and sports deep links, including hash navigation', async () => {
+  const user = userEvent.setup();
   window.history.replaceState(null, '', '/#/sports/lol');
   render(<App />);
-  expect(screen.getByRole('navigation', { name: 'Sports dashboards' })).toBeInTheDocument();
+  const nav = within(screen.getByRole('navigation', { name: 'Main navigation' }));
+  expect(nav.getByRole('link', { name: 'League of Legends' })).toHaveAttribute('aria-current', 'page');
+  expect(nav.queryByRole('link', { name: 'Sports Dashboards' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('navigation', { name: 'Sports dashboards' })).not.toBeInTheDocument();
   await screen.findByText('Database connected');
   const destinations = [
     ['/bets', 'Active Bets'], ['/suggestions', 'Trading Dashboard'],
@@ -44,10 +47,15 @@ test('supports every workspace and sports deep links, including hash navigation'
     await navigate(path);
     expect(document.title).toBe(`${label} · Betting Hub`);
   }
-  for (const sport of ['hockey', 'lol', 'nascar']) {
-    await navigate(`/sports/${sport}`);
-    expect(screen.getByRole('navigation', { name: 'Sports dashboards' })).toBeInTheDocument();
+  for (const [sport, label] of [['hockey', 'Hockey'], ['lol', 'League of Legends'], ['nascar', 'NASCAR']]) {
+    const link = nav.getByRole('link', { name: label });
+    expect(link).toHaveAttribute('href', `#/sports/${sport}`);
+    await user.click(link);
+    await waitFor(() => expect(document.title).toBe(`${label} · Betting Hub`));
+    expect(nav.getAllByRole('link', { current: 'page' })).toEqual([link]);
   }
+  await navigate('/sports');
+  expect(nav.getByRole('link', { name: 'Hockey' })).toHaveAttribute('aria-current', 'page');
   await navigate('/unknown-page');
   expect(screen.getByRole('link', { name: 'Back to Monitoring' })).toHaveAttribute('href', '#/');
 });
@@ -114,6 +122,9 @@ test('sidebar links change workspaces and the mobile menu opens without a top ba
   await user.click(menu);
   const dialog = screen.getByRole('dialog', { name: 'Your workspace' });
   expect(within(dialog).getByRole('link', { name: 'Active Bets' })).toHaveAttribute('aria-current', 'page');
+  for (const label of ['Hockey', 'League of Legends', 'NASCAR']) {
+    expect(within(dialog).getByRole('link', { name: label })).toBeInTheDocument();
+  }
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(menu).toHaveFocus();
