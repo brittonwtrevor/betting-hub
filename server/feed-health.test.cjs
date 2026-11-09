@@ -1,6 +1,10 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const { test } = require('node:test');
 const { stageEvents, oddsEvents } = require('../scripts/feed-events.cjs');
+const { readPandaEvents } = require('../scripts/feed-monitor.cjs');
 const { feeds, feedLight } = require('../src/features/monitoring/feedSchedule');
 const { createFeedHealthService } = require('./feed-health.cjs');
 
@@ -32,6 +36,20 @@ test('10-minute odds telemetry separates provider failures and excludes dry runs
   assert.equal(events[3].durationMs, 10000);
   assert.deepEqual(oddsEvents({ ...run, dry_run: true }), []);
   assert.equal(oddsEvents({ ...run, scripts: { ...run.scripts, 'ADDING_ODDS.R': 0 } }).at(-1).id, 'hockey-odds-join');
+});
+
+test('PandaScore backfill preserves historical checks and ignores incomplete reports', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hub-feed-test.'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const run = await fs.mkdtemp(path.join(root, 'lol-pipeline-status.'));
+  const frames = path.join(run, 'minute_frames.txt');
+  await fs.writeFile(frames, 'level=warning\n• Frame rows appended: 10\n⚠️ PandaScore had no usable frames for 2 maps (HTTP errors)\n');
+  await fs.utimes(frames, new Date(at), new Date(at));
+  await fs.writeFile(path.join(run, 'reference_data.txt'), 'level=success\n');
+  const [event, ...rest] = await readPandaEvents(root);
+  assert.deepEqual(rest, []);
+  assert.deepEqual(event, { id: 'panda-frames', at, durationMs: undefined, records: 10,
+    gaps: 2, unit: 'frames', status: 'warning', dataAt: at });
 });
 
 test('stoplights use common PandaScore limits and the separate weekly roster threshold', () => {

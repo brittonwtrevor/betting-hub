@@ -7,7 +7,7 @@ import { navigation } from './app/navigation';
 beforeEach(() => {
   window.history.replaceState(null, '', '/');
   window.scrollTo = jest.fn();
-  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [], partners: [], bets: [], feeds: [] }) });
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [], columns: [], source: {}, drafts: [], partners: [], bets: [], feeds: [], tasks: [] }) });
 });
 afterEach(() => { delete global.fetch; });
 
@@ -22,7 +22,7 @@ test('opens Monitoring and reports missing publication timestamps', async () => 
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
-  expect(within(nav).getAllByRole('link')).toHaveLength(6);
+  expect(within(nav).getAllByRole('link')).toHaveLength(7);
   expect(within(nav).queryByRole('link', { name: 'Telegram', exact: true })).not.toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Source health' });
   expect(within(sources).getAllByText('Not connected')).toHaveLength(5);
@@ -37,7 +37,8 @@ test('supports every workspace and sports deep links, including hash navigation'
   await screen.findByText('Database connected');
   const destinations = [
     ['/bets', 'Active Bets'], ['/suggestions', 'Trading Dashboard'],
-    ['/partners', 'Partner Accounting'], ['/analytics', 'Analytics'], ['/', 'Monitoring'],
+    ['/partners', 'Partner Accounting'], ['/analytics', 'Analytics'],
+    ['/project-management', 'Project Management'], ['/', 'Monitoring'],
   ];
   for (const [path, label] of destinations) {
     await navigate(path);
@@ -49,6 +50,41 @@ test('supports every workspace and sports deep links, including hash navigation'
   }
   await navigate('/unknown-page');
   expect(screen.getByRole('link', { name: 'Back to Monitoring' })).toHaveAttribute('href', '#/');
+});
+
+test('saves all five project task fields and reloads the saved task from the API', async () => {
+  window.history.replaceState(null, '', '/#/project-management');
+  const id = '0e6f4608-8a57-4b8f-8289-6c1cd2e7fd63';
+  const originalCrypto = Object.getOwnPropertyDescriptor(window, 'crypto');
+  Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => id } });
+  const defaultFetch = fetch.getMockImplementation();
+  const fields = { category: 'Data', importance: 'High', taskName: 'Refresh goalie inputs', sport: 'Hockey', effort: 'Medium' };
+  let savedTask;
+  fetch.mockImplementation(async (url, options) => {
+    if (url !== '/api/project-tasks') return defaultFetch(url, options);
+    if (options.method !== 'POST') return { ok: true, json: async () => ({ tasks: savedTask ? [savedTask] : [] }) };
+    savedTask = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ task: savedTask }) };
+  });
+
+  try {
+    const { unmount } = render(<App />);
+    await screen.findByText('No tasks yet.');
+    for (const [label, value] of Object.entries({ Category: fields.category, Importance: fields.importance, 'Task Name': fields.taskName, Sport: fields.sport, Effort: fields.effort })) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
+    await screen.findByRole('cell', { name: fields.taskName });
+    expect(savedTask).toEqual({ id, ...fields });
+
+    unmount();
+    render(<App />);
+    const row = await screen.findByRole('row', { name: 'Data High Refresh goalie inputs Hockey Medium' });
+    expect(within(row).getAllByRole('cell')).toHaveLength(5);
+  } finally {
+    if (originalCrypto) Object.defineProperty(window, 'crypto', originalCrypto);
+    else delete window.crypto;
+  }
 });
 
 test('filters planned sources and opens accessible source details', async () => {

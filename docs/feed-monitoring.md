@@ -2,7 +2,18 @@
 
 The Monitoring page reads the authenticated `/api/monitoring/feeds` endpoint. The collector machine writes compact results to `hub_feed_health` in the same DigitalOcean MySQL database as Betting Hub. Existing `LOL_DO_DB_*` settings and TLS configuration are reused. No raw API payloads, local file paths, or credentials are sent to this table.
 
-Deploy the app and use the monitored entry points from this checkout in place of the existing scheduled commands. Keep the existing output redirections and environment setup. For example, on the collector Mac, with times in its local timezone:
+On the collector Mac, backfill saved PandaScore reports and odds logs, then collect fresh Elite Prospects telemetry:
+
+```sh
+cd /Users/trevorbritton/projects/betting-hub
+zsh scripts/monitor-feeds.zsh sync
+zsh scripts/monitor-feeds.zsh hockey-data
+zsh scripts/monitor-feeds.zsh hockey-rosters
+```
+
+`sync --preview` shows the records that would be imported. The PandaScore backfill uses the saved report timestamps and leaves duration blank. It imports completed reports, including reports with coverage gaps. Set `LOL_PIPELINE_REPORTS_DIR` if the saved `lol-pipeline-status.*` directories are outside the current user's temporary directory. Run `lol --refresh-only` through the monitor if the reports are unavailable. `hockey-data` runs the games and player game-log collectors. Neither hockey collection command runs the model, deploys, or sends Telegram messages.
+
+Use the monitored entry points from this checkout in place of the existing scheduled commands. Keep the existing output redirections and environment setup. For example, on the collector Mac, with times in its local timezone:
 
 ```cron
 */10 * * * * /bin/zsh /Users/trevorbritton/projects/betting-hub/scripts/monitor-feeds.zsh hockey-odds

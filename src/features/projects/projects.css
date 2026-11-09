@@ -1,0 +1,24 @@
+.project-form { padding: 0 22px 20px; }
+.project-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.project-fields label { display: grid; gap: 6px; font-size: 13px; font-weight: 550; }
+.project-fields input, .project-fields select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #dce3ed;
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--paper);
+  font-weight: 400;
+}
+.project-form .button, .project-table td { font-size: 13px; }
+.project-table th { color: var(--ink); font-size: 12px; }
+.project-table td { overflow-wrap: anywhere; }
+.project-message { margin: 0 22px 14px; }
+.project-form .project-message { margin: 10px 0 0; }
+.project-message[role="alert"] { color: #b13d3d; }

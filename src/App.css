@@ -158,10 +158,8 @@ h1 { font-size: 29px; line-height: 1.2; font-weight: 650; letter-spacing: -.9px;
 .detail-list dt { color: #8a95a6; }
 .detail-list dd { margin: 0; color: #5d6d84; text-align: right; }
 .analytics-filters { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
-.chart-placeholder { position: relative; min-height: 280px; margin: 0 22px 22px; border-bottom: 1px solid #e7ecf3; }
-.chart-grid { position: absolute; inset: 0; background: repeating-linear-gradient(to top, #edf1f6 0, #edf1f6 1px, transparent 1px, transparent 56px); opacity: .8; }
-.chart-placeholder .empty-state { position: relative; padding-top: 45px; min-height: 280px; }
-.chart-placeholder .empty-state h3, .chart-placeholder .empty-state p { background: white; padding: 2px 8px; }
+.analytics-breakdown tbody th { background: white; color: var(--ink); font-size: inherit; white-space: normal; border-top: 0; }
+.analytics-breakdown th:not(:first-child), .analytics-breakdown td:not([colspan]) { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .drawer-backdrop { position: fixed; inset: 0; z-index: 100; background: #101d354d; backdrop-filter: blur(2px); display: flex; justify-content: flex-end; }
 .drawer { width: 430px; max-width: calc(100vw - 24px); height: 100%; overflow-y: auto; background: white; box-shadow: -8px 0 30px #172f4820; animation: drawer-enter .18s ease-out; }
 .drawer-left { margin-right: auto; width: 300px; }

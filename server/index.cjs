@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -137,6 +137,32 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       } catch (error) {
         if (error.partnerSafe) return json(error.status || 400, { message: error.message });
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save partners. Please try again.' });
+      }
+    }
+    if (pathname === '/api/project-tasks') {
+      if (!['GET', 'HEAD', 'POST'].includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD, POST' });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        if (!projectTasksService) return json(503, { message: 'Project task storage is unavailable.' });
+        if (request.method !== 'POST') return json(200, { tasks: await projectTasksService.list() });
+
+        if (request.headers['x-betting-hub'] !== 'project-tasks' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Project Management in Betting Hub to add tasks.' });
+        if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Project tasks require JSON.' });
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of request) {
+          size += Buffer.byteLength(chunk);
+          if (size > 8192) return json(413, { message: 'This task request is too large.' });
+          chunks.push(Buffer.from(chunk));
+        }
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        catch { return json(400, { message: 'Invalid task JSON.' }); }
+        return json(201, { task: await projectTasksService.add(body) });
+      } catch (error) {
+        if (error.taskSafe) return json(error.status, { message: error.message });
+        const message = request.method === 'POST' ? 'Unable to save the task. Try again.' : 'Unable to load tasks. Try refreshing.';
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message });
       }
     }
     if (pathname === '/api/confirms/bets') {
@@ -293,6 +319,7 @@ if (require.main === module) {
     const hockeyGamesService = require('./hockey.cjs').createHockeyGamesService();
     const sendsService = require('./sends.cjs').createSendsService();
     const partnersService = require('./partners.cjs').createPartnersService();
+    const projectTasksService = require('./project-tasks.cjs').createProjectTasksService();
     const telegramService = require('./telegram.cjs').createTelegramService();
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
     const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService });
@@ -301,7 +328,7 @@ if (require.main === module) {
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService,
+      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
@@ -313,7 +340,7 @@ if (require.main === module) {
       server.close();
       await confirmsService.close();
       await telegramReceiver.close();
-      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close()]);
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close(), projectTasksService.close()]);
     }
     process.once('SIGTERM', () => { void shutdown(); });
     process.once('SIGINT', () => { void shutdown(); });

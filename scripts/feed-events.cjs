@@ -5,6 +5,11 @@ const references = [
   ['players', 'Players'], ['rosters', 'Team lineup combinations'],
 ];
 const pandaMatches = ['panda-upcoming', 'panda-history', 'panda-map-stats'];
+const pandaReports = {
+  'reference_data.txt': 'refresh_reference_data.R',
+  'match_game_data.txt': 'LOL_DATA_UPDATE.R',
+  'minute_frames.txt': 'LOL_DATA_MINUTE_BY_MINUTE_UPDATE.R',
+};
 const stageFeeds = {
   'GAME_QUERY_DB_UPDATE.R': ['ep-games'], 'UPDATE_GAME_LOGS.R': ['ep-game-logs'], 'CURRENT_ROSTERS.R': ['ep-rosters'],
   'refresh_reference_data.R': references.map(([id]) => `panda-${id}`),
@@ -31,7 +36,8 @@ function stageEvents(script, { at, durationMs, code, output = '', report = '' })
   if (name === 'GAME_QUERY_DB_UPDATE.R') {
     const pages = [...output.matchAll(/Fetched rows: ([\d,]+)/g)];
     const records = pages.length ? pages.reduce((sum, match) => sum + Number(match[1].replace(/,/g, '')), 0) : null;
-    return [event(ids[0], records, null, 'games')];
+    const volume = output.includes('No games returned from API for the selected window') ? 0 : records;
+    return [event(ids[0], volume, null, 'games')];
   }
   if (name === 'UPDATE_GAME_LOGS.R') return [event(ids[0], count(output, /: (\d+) refreshed; \d+ still pending/), count(output, /(\d+) still pending/), 'games')];
   if (name === 'CURRENT_ROSTERS.R') {
@@ -92,4 +98,4 @@ function oddsEvents(run, snapshots = {}) {
   }
   return events;
 }
-module.exports = { stageFeeds, stageEvents, oddsEvents };
+module.exports = { stageFeeds, pandaReports, stageEvents, oddsEvents };
