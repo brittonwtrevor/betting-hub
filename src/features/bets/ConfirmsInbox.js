@@ -3,6 +3,7 @@ import { Badge, EmptyState, Panel, SearchField } from '../../components/ui';
 import { parseDate } from '../sports/lol/upcoming';
 import BetFilters, { defaultBetDates, easternBetDay, matchesBetDates, newestDateFirst, sportLabel } from './BetFilters';
 import { calculatePL, grades } from './confirmationFields';
+import { formatOdds } from './markets';
 
 const eastern = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 const money = value => value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' }).format(value);
@@ -79,7 +80,10 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
   const [deleting, setDeleting] = useState(false);
   useEffect(() => { if (!dirty && !busy && bet.revision > edited.revision) setEdited(bet); }, [bet, dirty, busy, edited.revision]);
   const change = (key, value) => { setEdited(current => ({ ...current, [key]: value })); setDirty(true); setError(''); };
-  const input = (key, label, maxLength, inputMode, type = 'text') => <input type={type} aria-label={`${label} for ${bet.id}`} value={edited[key] ?? ''} maxLength={maxLength} inputMode={inputMode} disabled={busy} onChange={event => change(key, event.target.value)} />;
+  const input = (key, label, maxLength, inputMode) => {
+    const value = key === 'odds' && typeof edited.odds === 'number' ? formatOdds(edited.odds) : edited[key] ?? '';
+    return <input type="text" aria-label={`${label} for ${bet.id}`} value={value} maxLength={maxLength} inputMode={inputMode} disabled={busy} onChange={event => change(key, event.target.value)} />;
+  };
   const pl = calculatePL(edited);
   const sportAndLeague = [sportLabel(bet.sport), bet.league].filter(Boolean).join(' · ');
   const receipts = Object.values((bet.notifications || []).reduce((latest, receipt) => ({ ...latest, [receipt.kind]: receipt }), {}));

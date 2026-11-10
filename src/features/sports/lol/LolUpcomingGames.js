@@ -55,14 +55,15 @@ function publicationTime(data) {
 
 function GameCell({ row, column, selectGame }) {
   const moneyline = column.type === 'moneyline';
+  const marketEdge = column.type === 'market-edge';
   const fair = moneyline ? row.sport !== 'hockey' && Boolean(row[column.key]) : isSeriesFair(row, column);
   const fairTitle = moneyline ? `${row.series_format} model moneyline` : `${row.series_format} XGB fair for Team A`;
   const className = [
     (moneyline || ['odds', 'number', 'percent'].includes(column.type)) && 'lol-numeric',
     fair && 'lol-series-fair',
     column.type === 'sport' && 'trading-sport',
-    column.key === 'edge' && 'trading-market-cell',
-    column.key === 'edge' && row.best_edge > 0 && 'trading-positive-edge',
+    marketEdge && 'trading-market-cell',
+    marketEdge && row[column.sortKey] > 0 && 'trading-positive-edge',
   ].filter(Boolean).join(' ');
   return <td className={className} title={fair ? fairTitle : column.key === 'series_format' ? 'Format inferred from the number of unique maps in the published match.' : undefined}>
     {column.key === 'team_a' ? <button className="game-market-button" type="button" aria-label={`Select markets for ${row.team_a} vs ${row.team_b}`} onClick={() => selectGame(row)}><Cell row={row} column={column} /></button> : <Cell row={row} column={column} />}
@@ -110,9 +111,9 @@ export default function LolUpcomingGames({ trading = false }) {
     setter(value);
     setPage(0);
   }
-  function changeSort(key) {
-    const direction = sort.key === key ? (sort.direction === 'asc' ? 'desc' : 'asc') : key === 'edge' ? 'desc' : 'asc';
-    setSort({ key, direction });
+  function changeSort(column) {
+    const direction = sort.key === column.key ? (sort.direction === 'asc' ? 'desc' : 'asc') : column.type === 'market-edge' ? 'desc' : 'asc';
+    setSort({ key: column.key, direction });
     setPage(0);
   }
   function updateFeedSettings(settings) {
@@ -157,7 +158,7 @@ export default function LolUpcomingGames({ trading = false }) {
         : ready && <>
           <div className="table-scroll lol-table-scroll" role="region" aria-label={trading ? "Trading Dashboard games" : "Upcoming games table"} tabIndex={0}>
             <table className={`data-table lol-table${trading ? ' trading-table' : ''}`} aria-label={trading ? "Trading Dashboard" : "League of Legends upcoming games"}><thead>
-              <tr>{columns?.map(column => <th key={column.key} scope="col" aria-sort={sort.key === column.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" onClick={() => changeSort(column.key)}>{column.label}<span aria-hidden="true">{sort.key === column.key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}</span></button></th>)}</tr>
+              <tr>{columns?.map(column => <th key={column.key} scope="col" aria-sort={sort.key === column.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button type="button" onClick={() => changeSort(column)}>{column.label}<span aria-hidden="true">{sort.key === column.key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}</span></button></th>)}</tr>
               <tr className="lol-column-filters">{columns?.map(column => <th key={column.key}>{column.type === 'sport' ?
                 <select aria-label="Filter Sport" value={filters[column.key] || ''} onChange={event => changeFilter(setFilters, { ...filters, [column.key]: event.target.value })}>
                   <option value="">All</option><option value="Hockey" aria-label="Hockey">HKY</option><option value="League of Legends" aria-label="League of Legends">LoL</option>

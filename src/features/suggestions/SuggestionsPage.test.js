@@ -19,10 +19,10 @@ const hockey = {
   columns: [], source: { updatedAt: '2026-11-04T12:00:00Z' },
   games: [
     hockeyGame,
-    { ...hockeyGame, goalie_team: 'Home goalie B', winoddsfulltime: -140, away_winoddsfulltime: 140, edge_home: -0.01, edge_over: -0.02, edge_under: -0.03 },
+    { ...hockeyGame, goalie_team: 'Home goalie B', winoddsfulltime: -140, away_winoddsfulltime: 140, edge_home: -0.01, edge_over: -0.02, edge_under: 0.02 },
     { ...hockeyGame, id: '2', homeTeamName: 'Detroit', goalie_team: 'Detroit goalie', edge_home: 0.12, edge_over: -0.02 },
     { ...hockeyGame, id: '3', homeTeamName: 'Buffalo', goalie_team: 'Buffalo goalie', HomeML: null, AwayML: null, OverOdds: null, UnderOdds: null },
-    { ...hockeyGame, id: '4', homeTeamName: 'Ottawa', edge_home: -0.01, edge_over: -0.02 },
+    { ...hockeyGame, id: '4', homeTeamName: 'Ottawa', edge_home: -0.01, edge_over: -0.02, edge_under: 0.07 },
   ],
 };
 const response = (data, ok = true) => ({ ok, json: async () => data });
@@ -34,7 +34,7 @@ const rowFor = text => screen.getByText(text, { exact: true }).closest('tr');
 
 afterEach(() => { delete global.fetch; window.localStorage.removeItem('betting-hub.trading-feed.v1'); });
 
-test('shows one hockey row per game and the matching LoL series moneyline', async () => {
+test('shows one hockey row per game with separate market edges and the matching LoL series moneyline', async () => {
   mockPublications();
   render(<SendsProvider><SuggestionsPage /></SendsProvider>);
   await screen.findByText('Database connected');
@@ -42,27 +42,29 @@ test('shows one hockey row per game and the matching LoL series moneyline', asyn
   const lineup = screen.getByRole('checkbox', { name: 'Only show last confirmed LoL lineup' });
   expect(lineup).toBeChecked();
   expect(within(table).queryByRole('button', { name: /Format|BO3 Price|BO5 Price|XGB Map1/ })).not.toBeInTheDocument();
+  expect(within(table).queryByRole('button', { name: 'Team B Fair ML' })).not.toBeInTheDocument();
   expect(within(rowFor('Alpha')).getByRole('img', { name: 'League of Legends' })).toBeInTheDocument();
   expect(within(rowFor('Boston')).getByRole('img', { name: 'Hockey' })).toBeInTheDocument();
   for (const [team, price] of [['Alpha', 180], ['Charlie', 130], ['Delta', 220]]) {
     expect(within(rowFor(team)).getByText(`-${price}`)).toHaveClass('lol-series-fair');
-    expect(within(rowFor(team)).getByText(`+${price}`)).toBeInTheDocument();
+    expect(within(rowFor(team)).getByText('—')).toBeInTheDocument();
   }
   expect(within(rowFor('Echo')).getAllByText('—')).toHaveLength(2);
   expect(rowFor('Alpha')).toHaveTextContent('Unavailable');
-  expect(rowFor('Ottawa')).toHaveTextContent('No positive edge');
-  expect(rowFor('Buffalo')).toHaveTextContent('Unavailable');
-  const positive = within(rowFor('Boston')).getByText(/Home ML.*Over 5.5/);
-  expect(positive).toHaveTextContent('Home ML · +4.0 pp Over 5.5 · +3.0 pp');
-  expect(positive).toHaveClass('trading-positive-edge');
+  expect(within(rowFor('Ottawa')).getByRole('cell', { name: 'No positive edge' })).not.toHaveClass('trading-positive-edge');
+  expect(within(rowFor('Buffalo')).getAllByRole('cell', { name: 'Unavailable' })).toHaveLength(2);
+  const boston = within(rowFor('Boston'));
+  expect(boston.getByRole('cell', { name: 'Home ML · +4.0 pp' })).toHaveClass('trading-positive-edge');
+  expect(boston.getByRole('cell', { name: 'Over 5.5 · +3.0 pp\nUnder 5.5 · +2.0 pp' })).toHaveClass('trading-positive-edge');
   expect(rowFor('Boston')).toHaveTextContent('-100 to -140');
-  expect(rowFor('Boston')).toHaveTextContent('+140 to +100');
   expect(table.tBodies[0].rows).toHaveLength(8);
   fireEvent.change(screen.getByRole('combobox', { name: 'Filter Sport' }), { target: { value: 'Hockey' } });
   expect(table.tBodies[0].rows).toHaveLength(4);
-  fireEvent.click(within(table).getByRole('button', { name: 'Edge' }));
+  fireEvent.click(within(table).getByRole('button', { name: 'ML Edge' }));
   expect(table.tBodies[0].rows[0]).toHaveTextContent('Detroit');
-  fireEvent.change(screen.getByRole('textbox', { name: 'Filter Edge' }), { target: { value: 'Over' } });
+  fireEvent.click(within(table).getByRole('button', { name: 'Total Edge' }));
+  expect(table.tBodies[0].rows[0]).toHaveTextContent('Ottawa');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Filter Total Edge' }), { target: { value: 'Over' } });
   expect(within(table).getAllByRole('row')).toHaveLength(3);
   fireEvent.click(within(table).getByRole('button', { name: 'Select markets for Boston vs Toronto' }));
   const dialog = within(screen.getByRole('dialog'));

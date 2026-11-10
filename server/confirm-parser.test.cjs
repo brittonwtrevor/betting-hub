@@ -41,6 +41,49 @@ test('supports multiple fills and leaves ambiguous values blank for review', () 
   assert.equal(validateExtraction({ ...extracted, bets: [{ ...extracted.bets[0], grade: 'WIN', pl: 100000 }] }, message).bets[0].pl, null);
 });
 
+test('accepts positive odds in a multi-bet Telegram reply even if the model omits JSON quotes', async () => {
+  const harvard = { ...message, text: 'HAR561 Harvard +2.5 $670 -134 Harvard ML $500 +366', betIds: ['HAR561'],
+    contexts: [{ betId: 'HAR561', context: { ...context, game: { team_a: 'Boston Univ.', team_b: 'Harvard Univ.' },
+      markets: [{ id: 'b:spread', label: 'Harvard +2.5', line: 2.5 }, { id: 'b:ml', label: 'Harvard ML' }] } }] };
+  const selection = { betId: 'HAR561', team: 'Harvard Univ.' };
+  const bets = [{ ...selection, bet: 'Spread +2.5', risk: 670, odds: -134 }, { ...selection, bet: 'Moneyline', risk: 500, odds: '+366' }];
+  const issues = ['Preserve quoted text such as "odds":+366, as written.'];
+  const json = JSON.stringify({ bets, issues });
+  for (const content of [json, json.replace('"odds":"+366"', '"odds": +366')]) {
+    const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => ({
+      ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: 'stop' }] }),
+    }) });
+    const result = await parser.parse(harvard);
+    assert.deepEqual(result.bets.map(({ bet, risk, odds }) => ({ bet, risk, odds })), [
+      { bet: 'Spread +2.5', risk: 670, odds: -134 }, { bet: 'Moneyline', risk: 500, odds: 366 },
+    ]);
+    assert.deepEqual(result.issues, issues);
+  }
+});
+
+test('keeps every named parlay leg in one Bet description and the combined price in Odds', async () => {
+  const parlay = { ...message, text: 'HAR561 harvard and chiefs parlay 350 $2', betIds: ['HAR561'],
+    contexts: [{ betId: 'HAR561', context: { ...context, game: { team_a: 'Boston Univ.', team_b: 'Harvard Univ.' } } }] };
+  const calls = [];
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async (url, input) => {
+    calls.push(JSON.parse(input.body));
+    return response({ bets: [{ betId: 'HAR561', team: 'Harvard Univ.', bet: 'Parlay (350)', risk: 2, odds: null }], issues: [] });
+  } });
+
+  const result = await parser.parse(parlay);
+  assert.deepEqual(result.bets.map(({ betId, team, bet, risk, odds, complete }) => ({ betId, team, bet, risk, odds, complete })), [
+    { betId: 'HAR561', team: 'Harvard Univ.', bet: 'Parlay: harvard and chiefs', risk: 2, odds: 350, complete: true },
+  ]);
+  assert.match(calls[0].messages[0].content, /every reported selection, including teams from other games/);
+  assert.match(calls[0].messages[0].content, /"bet":"Parlay: Harvard and Chiefs","risk":2,"odds":350/);
+
+  const detailed = { ...result.bets[0], bet: 'Parlay: Harvard +2.5' };
+  const detailedReply = { ...parlay, text: 'HAR561 Harvard +2.5 and Chiefs ML parlay -125 $2' };
+  const [detailedBet] = validateExtraction({ bets: [detailed], issues: [] }, detailedReply).bets;
+  assert.equal(detailedBet.bet, 'Parlay: Harvard +2.5 and Chiefs ML');
+  assert.equal(detailedBet.odds, -125);
+});
+
 test('sends an image with a bet-ID-only caption as multimodal input, including prediction-market guidance', async () => {
   const image = 'data:image/png;base64,iVBORw0KGgo=';
   const photoMessage = { ...message, text: 'HAN187', hasMedia: true };

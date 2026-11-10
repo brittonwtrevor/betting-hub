@@ -111,7 +111,7 @@ test('loads editable wager fields, grading options and original source without c
 });
 
 test('groups separate replies by Bet ID and keeps each wager independently editable', async () => {
-  const anotherBet = { ...base, id: 'bet-2', bet: 'Map 1', risk: 25, sourceId: 'reply-2' };
+  const anotherBet = { ...base, id: 'bet-2', bet: 'Map 1', risk: 25, odds: 366, sourceId: 'reply-2' };
   const anotherPartner = { ...base, id: 'bet-3', partnerId: 'kenny', partnerName: 'Kenny', sourceId: 'reply-3' };
   const anotherId = { ...anotherPartner, id: 'bet-4', betId: 'BOS145' };
   stored.sources.push(
@@ -126,6 +126,7 @@ test('groups separate replies by Bet ID and keeps each wager independently edita
   expect(grouped.getByRole('cell', { name: 'Kenny' })).toBeInTheDocument();
   expect(other.getAllByRole('row')).toHaveLength(2);
   expect(other.getByLabelText('Risk for bet-4')).toBeInTheDocument();
+  expect(grouped.getByLabelText('Odds for bet-2')).toHaveValue('+366');
 
   fireEvent.change(grouped.getByLabelText('Risk for bet-2'), { target: { value: '75' } });
   fireEvent.click(grouped.getAllByRole('button', { name: 'Save', exact: true }).find(button => !button.disabled));
@@ -171,6 +172,7 @@ test('edits wager fields, saves a WIN and persists net P/L', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save', exact: true })).toBeDisabled());
   expect(stored.sources[0].bets[0]).toMatchObject({ betId: base.betId, game: base.game, team: 'Other team', bet: 'Spread -1.5', risk: 500, odds: 150, grade: 'WIN', pl: 750 });
+  expect(screen.getByLabelText('Odds for bet-1')).toHaveValue('+150');
   const patch = fetch.mock.calls.find(([, options]) => options.method === 'PATCH');
   expect(patch[1].headers['X-Betting-Hub']).toBe('confirms');
 });
