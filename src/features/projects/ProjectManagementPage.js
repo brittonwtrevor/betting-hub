@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sports } from '../../app/navigation';
-import { Panel } from '../../components/ui';
+import { Panel, Segments } from '../../components/ui';
 import './projects.css';
 
 const endpoint = '/api/project-tasks';
+const writeHeaders = { 'Content-Type': 'application/json', 'X-Betting-Hub': 'project-tasks' };
 const levels = ['Low', 'Medium', 'High'];
 const fields = [
   { key: 'category', label: 'Category', maxLength: 80 },
@@ -12,11 +13,14 @@ const fields = [
   { key: 'sport', label: 'Sport', maxLength: 80 },
   { key: 'effort', label: 'Effort', options: levels },
 ];
-const columns = [...fields, { key: 'notes', label: 'Notes' }];
+const statuses = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'completed', label: 'Completed' },
+];
 const emptyTask = { category: '', importance: '', taskName: '', sport: '', effort: '', notes: '' };
 
-async function requestTasks(options, fallback) {
-  const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', ...options });
+async function requestTasks(options, fallback, path = endpoint) {
+  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...options });
   const result = await response.json().catch(() => null);
   if (!response.ok || !result) throw new Error(result?.message || fallback);
   return result;
@@ -27,10 +31,16 @@ export default function ProjectManagementPage() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('pending');
+  const [updatingId, setUpdatingId] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [statusError, setStatusError] = useState('');
   const [refresh, setRefresh] = useState(0);
   const draftId = useRef(null);
+  const visibleTasks = tasks.filter(task => (task.status ?? 'pending') === statusFilter);
+  const isCompleted = statusFilter === 'completed';
+  const statusLabel = isCompleted ? 'Completed' : 'Pending';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,11 +75,12 @@ export default function ProjectManagementPage() {
       draftId.current ??= window.crypto.randomUUID();
       const { task } = await requestTasks({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Betting-Hub': 'project-tasks' },
+        headers: writeHeaders,
         body: JSON.stringify({ id: draftId.current, ...draft }),
       }, fallback);
       if (task?.id !== draftId.current) throw new Error(fallback);
       setTasks(current => [task, ...current.filter(item => item.id !== task.id)]);
+      setStatusFilter('pending');
       setDraft(emptyTask);
       draftId.current = null;
     } catch (error) {
@@ -79,9 +90,31 @@ export default function ProjectManagementPage() {
     }
   }
 
+  async function toggleStatus(id) {
+    if (loading || updatingId) return;
+    const status = isCompleted ? 'pending' : 'completed';
+    const fallback = 'Unable to update task status. Try again.';
+    setUpdatingId(id);
+    setStatusError('');
+    try {
+      const { task } = await requestTasks({
+        method: 'PATCH',
+        headers: writeHeaders,
+        body: JSON.stringify({ status }),
+      }, fallback, `${endpoint}/${encodeURIComponent(id)}`);
+      if (task?.id !== id || !statuses.some(option => option.value === task.status)) throw new Error(fallback);
+      setTasks(current => current.map(item => item.id === id ? { ...item, status: task.status } : item));
+    } catch (error) {
+      setStatusError(error.message);
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   function refreshTasks() {
     setLoading(true);
     setLoadError('');
+    setStatusError('');
     setRefresh(value => value + 1);
   }
 
@@ -123,19 +156,45 @@ export default function ProjectManagementPage() {
       </form>
     </Panel>
     <Panel title="Tasks" action={
-      <button type="button" className="button button-secondary" disabled={loading || saving} onClick={refreshTasks}>
+      <button type="button" className="button button-secondary" disabled={loading || saving || !!updatingId} onClick={refreshTasks}>
         Refresh tasks
       </button>
     }>
+      <div className="project-filters">
+        <Segments label="Filter tasks by status" items={statuses} value={statusFilter} onChange={setStatusFilter} />
+      </div>
       {loading && <p role="status" className="project-message">Loading tasks…</p>}
       {loadError && <p role="alert" className="project-message">{loadError}</p>}
+      {statusError && <p role="alert" className="project-message">{statusError}</p>}
       <div className="table-scroll">
         <table className="data-table project-table" aria-label="Project tasks">
-          <thead><tr>{columns.map(({ key, label }) => <th key={key} scope="col">{label}</th>)}</tr></thead>
-          <tbody>
-            {tasks.map(task => <tr key={task.id}>{columns.map(({ key }) => <td key={key} className={key === 'notes' ? 'project-notes-cell' : undefined}>{task[key]}</td>)}</tr>)}
-            {!loading && !loadError && !tasks.length && <tr><td colSpan={columns.length}>No tasks yet.</td></tr>}
-          </tbody>
+          <thead><tr>
+            {fields.map(({ key, label }) => <th key={key} scope="col">{label}</th>)}
+            <th scope="col">Status</th>
+          </tr></thead>
+          {visibleTasks.map(task => <tbody key={task.id} className="project-task">
+            <tr className="project-task-row" tabIndex={task.notes ? 0 : undefined}>
+              {fields.map(({ key }) => <td key={key}>{task[key]}</td>)}
+              <td>
+                <button type="button" className={`button project-status project-status-${statusFilter}`}
+                  disabled={loading || !!updatingId} onClick={() => toggleStatus(task.id)}
+                  title={isCompleted ? 'Mark as pending' : 'Mark as completed'}>
+                  {updatingId === task.id ? 'Saving…' : statusLabel}
+                </button>
+              </td>
+            </tr>
+            {task.notes && <tr className="project-task-notes">
+              <td colSpan={fields.length + 1}>
+                <strong>Notes</strong>
+                <div className="project-note-text" tabIndex={0}>{task.notes}</div>
+              </td>
+            </tr>}
+          </tbody>)}
+          {!loading && !loadError && !visibleTasks.length && <tbody><tr>
+            <td colSpan={fields.length + 1}>
+              No {statusFilter} tasks.
+            </td>
+          </tr></tbody>}
         </table>
       </div>
     </Panel>

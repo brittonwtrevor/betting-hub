@@ -60,7 +60,7 @@ test('supports every workspace and sports deep links, including hash navigation'
   expect(screen.getByRole('link', { name: 'Back to Monitoring' })).toHaveAttribute('href', '#/');
 });
 
-test('saves project task fields and multiline notes and reloads the saved task from the API', async () => {
+test('saves project tasks and notes and filters tasks by their saved status', async () => {
   window.history.replaceState(null, '', '/#/project-management');
   const id = '0e6f4608-8a57-4b8f-8289-6c1cd2e7fd63';
   const originalCrypto = Object.getOwnPropertyDescriptor(window, 'crypto');
@@ -69,6 +69,10 @@ test('saves project task fields and multiline notes and reloads the saved task f
   const fields = { category: 'Data', importance: 'High', taskName: 'Refresh goalie inputs', sport: 'Hockey', effort: 'Medium', notes: 'Use the latest rosters.\nKeep a fallback goalie.' };
   let savedTask;
   fetch.mockImplementation(async (url, options) => {
+    if (url === `/api/project-tasks/${id}` && options.method === 'PATCH') {
+      savedTask = { ...savedTask, ...JSON.parse(options.body) };
+      return { ok: true, json: async () => ({ task: { id, status: savedTask.status } }) };
+    }
     if (url !== '/api/project-tasks') return defaultFetch(url, options);
     if (options.method !== 'POST') return { ok: true, json: async () => ({ tasks: savedTask ? [savedTask] : [] }) };
     savedTask = JSON.parse(options.body);
@@ -77,7 +81,9 @@ test('saves project task fields and multiline notes and reloads the saved task f
 
   try {
     const { unmount } = render(<App />);
-    await screen.findByText('No tasks yet.');
+    await screen.findByText('No pending tasks.');
+    const filters = () => within(screen.getByRole('group', { name: 'Filter tasks by status' }));
+    expect(filters().getByRole('button', { name: 'Pending' })).toHaveAttribute('aria-pressed', 'true');
     for (const [label, value] of Object.entries({ Category: fields.category, Importance: fields.importance, 'Task Name': fields.taskName, Sport: fields.sport, Effort: fields.effort })) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
@@ -88,12 +94,23 @@ test('saves project task fields and multiline notes and reloads the saved task f
     await screen.findByRole('cell', { name: fields.taskName });
     expect(savedTask).toEqual({ id, ...fields });
 
+    const table = () => within(screen.getByRole('table', { name: 'Project tasks' }));
+    expect(table().queryByRole('columnheader', { name: 'Notes' })).not.toBeInTheDocument();
+    expect(table().getByText(/Use the latest rosters/).textContent).toBe(fields.notes);
+    fireEvent.click(table().getByRole('button', { name: 'Pending' }));
+    await screen.findByText('No pending tasks.');
+    expect(savedTask.status).toBe('completed');
+
     unmount();
     render(<App />);
-    const row = await screen.findByRole('row', { name: /Data High Refresh goalie inputs Hockey Medium/ });
-    const cells = within(row).getAllByRole('cell');
-    expect(cells).toHaveLength(6);
-    expect(cells[5].textContent).toBe(fields.notes);
+    await screen.findByText('No pending tasks.');
+    fireEvent.click(filters().getByRole('button', { name: 'Completed' }));
+    expect(table().getByRole('cell', { name: fields.taskName })).toBeInTheDocument();
+    fireEvent.click(table().getByRole('button', { name: 'Completed' }));
+    await screen.findByText('No completed tasks.');
+    fireEvent.click(filters().getByRole('button', { name: 'Pending' }));
+    expect(table().getByRole('cell', { name: fields.taskName })).toBeInTheDocument();
+    expect(savedTask.status).toBe('pending');
   } finally {
     if (originalCrypto) Object.defineProperty(window, 'crypto', originalCrypto);
     else delete window.crypto;

@@ -144,14 +144,18 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: `Unable to load or save ${payments ? 'partner payments' : 'partners'}. Please try again.` });
       }
     }
-    if (pathname === '/api/project-tasks') {
-      if (!['GET', 'HEAD', 'POST'].includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: 'GET, HEAD, POST' });
+    const projectTaskRoute = /^\/api\/project-tasks(?:\/([^/]+))?$/.exec(pathname);
+    if (projectTaskRoute) {
+      const id = projectTaskRoute[1];
+      const allowed = id ? ['PATCH'] : ['GET', 'HEAD', 'POST'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      const reading = ['GET', 'HEAD'].includes(request.method);
       try {
         if (!projectTasksService) return json(503, { message: 'Project task storage is unavailable.' });
-        if (request.method !== 'POST') return json(200, { tasks: await projectTasksService.list() });
+        if (reading) return json(200, { tasks: await projectTasksService.list() });
 
-        if (request.headers['x-betting-hub'] !== 'project-tasks' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Project Management in Betting Hub to add tasks.' });
+        if (request.headers['x-betting-hub'] !== 'project-tasks' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Project Management in Betting Hub to save tasks.' });
         if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Project tasks require JSON.' });
         let size = 0;
         const chunks = [];
@@ -163,10 +167,11 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         let body;
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { return json(400, { message: 'Invalid task JSON.' }); }
+        if (id) return json(200, { task: await projectTasksService.updateStatus(id, body) });
         return json(201, { task: await projectTasksService.add(body) });
       } catch (error) {
         if (error.taskSafe) return json(error.status, { message: error.message });
-        const message = request.method === 'POST' ? 'Unable to save the task. Try again.' : 'Unable to load tasks. Try refreshing.';
+        const message = reading ? 'Unable to load tasks. Try refreshing.' : 'Unable to save the task. Try again.';
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message });
       }
     }

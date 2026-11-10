@@ -98,7 +98,6 @@ test('saves several leagues by sport and restores the feed settings on remount',
   global.fetch = jest.fn(async url => response(url === hockeyEndpoint ? hockeyWithLeagues : lolWithLeagues));
   const view = render(<SuggestionsPage />);
   await screen.findByText('Database connected');
-  fireEvent.change(screen.getByRole('combobox', { name: 'League', exact: true }), { target: { value: 'LCP' } });
 
   const settings = () => {
     fireEvent.click(screen.getByRole('button', { name: 'Feed settings' }));
@@ -131,4 +130,33 @@ test('saves several leagues by sport and restores the feed settings on remount',
   fireEvent.click(drawer.getByRole('button', { name: 'Reset to all' }));
   fireEvent.click(drawer.getByRole('button', { name: 'Save filters' }));
   for (const team of ['Boston', 'Ottawa', 'Delta', 'Echo']) expect(rowFor(team)).toBeInTheDocument();
+});
+
+test('the toolbar league checkboxes apply immediately and restore selections when returning', async () => {
+  const extraLeague = { ...hockeyGame, id: '5', homeTeamName: 'Maine', leagueName: 'NCAA' };
+  mockPublications(response({ ...hockey, games: [...hockey.games, extraLeague] }));
+  const view = render(<SuggestionsPage />);
+  await screen.findByText('Database connected');
+  const open = label => fireEvent.click(screen.getByLabelText(`Leagues: ${label}`));
+  const checkbox = name => screen.getByRole('checkbox', { name, exact: true });
+  open('All leagues');
+  expect(checkbox('All leagues')).toBeChecked();
+  fireEvent.click(checkbox('NHL'));
+  expect(rowFor('Boston')).toBeInTheDocument();
+  expect(screen.queryByText('Maine')).not.toBeInTheDocument();
+  expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+  fireEvent.click(checkbox('LCK'));
+  expect(rowFor('Alpha')).toBeInTheDocument();
+  expect(checkbox('NHL')).toBeChecked();
+  view.unmount();
+
+  render(<SuggestionsPage />);
+  await screen.findByText('Database connected');
+  expect(screen.queryByText('Maine')).not.toBeInTheDocument();
+  open('2 leagues');
+  expect(checkbox('NHL')).toBeChecked();
+  expect(checkbox('LCK')).toBeChecked();
+  expect(checkbox('NCAA')).not.toBeChecked();
+  fireEvent.click(checkbox('All leagues'));
+  expect(rowFor('Maine')).toBeInTheDocument();
 });

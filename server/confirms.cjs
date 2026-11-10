@@ -206,8 +206,9 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
           const payload = decode(row.payload);
           const savedBets = bets.filter(bet => bet.source_id === row.id).map(bet => ({ ...bet, fields: decode(bet.payload) }));
           const byBet = new Map(savedBets.map(bet => [bet.id, bet.fields]));
-          const sports = [...new Set(eligibleContexts(payload.message).map(item => item.context.game.sport).filter(Boolean))];
-          sources.push({ id: row.id, revision: row.revision, status: row.status, ...payload, sports,
+          const contexts = eligibleContexts(payload.message);
+          const sports = [...new Set(contexts.map(item => item.context.game.sport).filter(Boolean))];
+          sources.push({ id: row.id, revision: row.revision, status: row.status, ...payload, sports, eligibleBetIds: contexts.map(item => item.betId),
             error: row.last_error, deletedBetCount: savedBets.filter(bet => bet.fields.deletedAt).length,
             deletionNotifications: receipts.filter(receipt => receipt.kind === 'delete' && byBet.has(receipt.bet_row_id))
               .map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at,
@@ -274,7 +275,10 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         const [[row]] = await connection.execute('SELECT * FROM hub_confirm_sources WHERE id = ? FOR UPDATE', [id]);
         if (!row) throw fail('This reply no longer exists. Refresh Confirms.', 404);
         if (row.revision !== input?.revision) throw fail('This reply changed. Refresh Confirms before adding a bet.', 409);
-        const fields = normalizeFields(defaultFields(decode(row.payload).message));
+        const { message } = decode(row.payload);
+        const context = eligibleContexts(message).find(item => item.betId === input.betId);
+        if (input.betId !== undefined && !context) throw fail('This Bet ID is unavailable for manual entry from this reply.');
+        const fields = normalizeFields(defaultFields(message, context));
         const bet = await insertBet(connection, id, fields, actor);
         await connection.execute("UPDATE hub_confirm_sources SET status = 'manual', revision = revision + 1, lease_until_ms = 0, last_error = NULL, updated_at = ? WHERE id = ?", [now().toISOString(), id]);
         return bet;

@@ -19,8 +19,19 @@
 .lol-table td.lol-series-fair { background: #eef0f2; }
 .lol-table td.trading-market-cell { white-space: pre-line; line-height: 1.5; min-width: 135px; }
 .lol-table td.trading-positive-edge { background: #e6f4e6; color: #276342; font-weight: 600; }
-.trading-table th, .trading-table td { padding-left: 10px; padding-right: 10px; }
-.trading-table td { padding-top: 9px; padding-bottom: 9px; }
+.main-content.trading-layout { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 360px; padding-top: 10px; padding-bottom: 8px; }
+.trading-layout .page-content { flex: 1; min-height: 0; }
+.trading-layout .page-footer { padding-top: 8px; }
+.trading-layout .mobile-menu { flex-shrink: 0; }
+.trading-layout .trading-feed-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: visible; }
+.trading-layout .trading-feed-panel > :not(.lol-table-scroll) { flex-shrink: 0; }
+.trading-layout .trading-feed-panel .lol-table-scroll { flex: 1; min-height: 0; max-height: none; overflow: auto; }
+.trading-feed-panel .lol-controls { padding-top: 8px; padding-bottom: 8px; }
+.trading-feed-panel .trading-table th { padding: 7px 10px; }
+.trading-feed-panel .trading-table .lol-column-filters th { padding-top: 3px; }
+.trading-feed-panel .trading-table td { padding: 5px 10px; }
+.trading-feed-panel .trading-table td.trading-market-cell { line-height: 1.3; }
+.trading-feed-panel .lol-pagination, .trading-feed-panel .lol-source { padding: 7px 14px; }
 .trading-table th:first-child { width: 1%; }
 .trading-sport { text-align: center; }
 .trading-sport svg { vertical-align: middle; }
@@ -34,4 +45,15 @@
 .feed-settings legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
 .feed-league-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; }
 .feed-settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.feed-league-filter { position: relative; }
+.feed-league-filter summary { display: flex; flex-direction: column; gap: 6px; color: #8c96a6; font-size: 9px; font-weight: 500; cursor: pointer; list-style: none; }
+.feed-league-filter summary::-webkit-details-marker { display: none; }
+.feed-league-value { min-width: 128px; min-height: 35px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border: 1px solid #e5e9f0; border-radius: 5px; background: var(--paper); color: #63718a; font-size: 10px; }
+.feed-league-options { position: absolute; z-index: 5; inset-inline-start: 0; top: calc(100% + 5px); width: 220px; max-height: min(55vh, 420px); overflow-y: auto; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); box-shadow: 0 5px 18px #18233724; }
+.feed-league-options fieldset { min-width: 0; margin: 6px 0 0; padding: 4px 0 0; border: 0; border-top: 1px solid var(--line); }
+.feed-league-options legend, .feed-league-options p { color: var(--muted); font-size: 10px; }
+.feed-league-options .lol-checkbox { min-height: 27px; }
+@media (max-width: 650px) {
+  .feed-league-options { position: fixed; inset: 20vh 16px auto; width: auto; }
+}
 @media (max-width: 760px) { .lol-controls .search-field { max-width: none; } .lol-checkbox { padding-top: 0; } .lol-pagination { padding: 14px 16px; } }

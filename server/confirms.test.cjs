@@ -289,6 +289,18 @@ test('manual entry works without an AI key and cancels an in-flight extraction w
   assert.equal(result.bets[0].risk, null);
 });
 
+test('manual entry uses the selected eligible Bet ID from a multi-ID reply', async () => {
+  const f = fixture({ configured: false });
+  const otherContext = { ...context, game: { ...context.game, team_a: 'Boston', team_b: 'Toronto', sport: 'hockey' },
+    markets: [{ id: 'a:ml', label: 'Boston ML' }] };
+  f.setMessages([{ ...original, betIds: ['HAN187', 'BOS145'], contexts: [...original.contexts, { betId: 'BOS145', context: otherContext }] }]);
+  const { sources: [source] } = await f.service.list();
+  assert.deepEqual(source.eligibleBetIds, ['HAN187', 'BOS145']);
+  await assert.rejects(f.service.addManual(source.id, { revision: source.revision, betId: 'BOS999' }), /unavailable for manual entry/);
+  const added = await f.service.addManual(source.id, { revision: source.revision, betId: 'BOS145' });
+  assert.deepEqual([added.betId, added.game, added.bet, added.sport], ['BOS145', 'Boston vs Toronto', 'Boston ML', 'hockey']);
+});
+
 test('retryable failures back off and stop at three attempts; a manual retry can requeue an empty reply', async () => {
   const f = fixture({ parse: async () => { throw Object.assign(new Error('Temporary model outage'), { confirmSafe: true, retryable: true }); } });
   await f.service.tick();

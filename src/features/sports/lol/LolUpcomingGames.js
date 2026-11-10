@@ -5,6 +5,7 @@ import { cellText, easternTime, filterGames, isSeriesFair, sortGames } from './u
 import { useSends } from '../../bets/SendsContext';
 import { hockeyTradingGames, lolTradingGame, tradingColumns } from '../../suggestions/tradingGames';
 import FeedSettings, { matchesFeedSettings, readFeedSettings, saveFeedSettings } from '../../suggestions/FeedSettings';
+import FeedLeagueFilter from '../../suggestions/FeedLeagueFilter';
 import './lol.css';
 
 function Cell({ row, column }) {
@@ -94,7 +95,7 @@ export default function LolUpcomingGames({ trading = false }) {
   ], [data, hockeyData, trading]);
   const columns = trading ? tradingColumns : data?.columns;
   const feedGames = useMemo(() => trading ? games.filter(game => matchesFeedSettings(game, feedSettings)) : games, [games, trading, feedSettings]);
-  const leagues = useMemo(() => [...new Set(feedGames.map(row => row.league).filter(Boolean))].sort(), [feedGames]);
+  const leagues = useMemo(() => trading ? [] : [...new Set(games.map(row => row.league).filter(Boolean))].sort(), [games, trading]);
   const visible = useMemo(() => {
     const filtered = filterGames(feedGames, columns || [], { league, lastLineup, search, filters });
     const column = columns?.find(column => column.key === sort.key);
@@ -114,10 +115,8 @@ export default function LolUpcomingGames({ trading = false }) {
     setSort({ key, direction });
     setPage(0);
   }
-  function applyFeedSettings(settings) {
+  function updateFeedSettings(settings) {
     setFeedSettings(settings);
-    setLeague('ALL');
-    setFilters(current => ({ ...current, league: '', sport_label: '' }));
     setPage(0);
     try {
       saveFeedSettings(settings);
@@ -125,22 +124,27 @@ export default function LolUpcomingGames({ trading = false }) {
     } catch {
       setSettingsNotice('Filters applied for this visit. This browser could not save them.');
     }
+  }
+  function applyFeedSettings(settings) {
+    updateFeedSettings(settings);
+    setFilters(current => ({ ...current, league: '', sport_label: '' }));
     closeSettings();
   }
 
   return <>
-    <Panel>
+    <Panel className={trading ? 'trading-feed-panel' : ''}>
       <div className="panel-controls lol-controls">
         <div className="filter-row">
           <Badge tone={ready && !loading ? 'green' : 'neutral'}>{loading ? 'Loading…' : !ready ? 'Data unavailable' : trading && !(data && hockeyData) ? 'One source connected' : 'Database connected'}</Badge>
           <button className="button button-secondary" type="button" disabled={loading} onClick={() => { setRefresh(value => value + 1); setPage(0); }}><Icon name="refresh" size={16} />{loading ? 'Loading…' : 'Refresh data'}</button>
           {trading && <button type="button" className="button button-secondary" aria-haspopup="dialog" onClick={() => setSettingsOpen(true)}>Feed settings</button>}
-          <SelectField label="League" value={league} onChange={value => changeFilter(setLeague, value)} options={[{ value: 'ALL', label: 'All leagues' }, ...leagues.map(value => ({ value, label: value }))]} />
+          {trading ? <FeedLeagueFilter games={games} settings={feedSettings} onChange={updateFeedSettings} />
+            : <SelectField label="League" value={league} onChange={value => changeFilter(setLeague, value)} options={[{ value: 'ALL', label: 'All leagues' }, ...leagues.map(value => ({ value, label: value }))]} />}
           <label className="lol-checkbox"><input type="checkbox" checked={lastLineup} onChange={event => changeFilter(setLastLineup, event.target.checked)} />{trading ? 'Only show last confirmed LoL lineup' : 'Only show last confirmed lineup'}</label>
           <SearchField label="Search upcoming games" placeholder="Search teams, players, games…" value={search} onChange={value => changeFilter(setSearch, value)} />
           <SelectField label="Rows per page" value={pageSize} onChange={value => changeFilter(setPageSize, value)} options={['25', '50', '100', '200'].map(value => ({ value, label: value }))} />
           <button type="button" className="button button-secondary" onClick={() => {
-            if (trading) { setLeague('ALL'); setSearch(''); }
+            if (trading) setSearch('');
             changeFilter(setFilters, {});
           }}>Clear filters</button>
         </div>
@@ -163,7 +167,7 @@ export default function LolUpcomingGames({ trading = false }) {
               {pageRows.map((row, index) => <tr key={`${row.sport || 'lol'}-${row.game_id}-${currentPage}-${index}`} className="game-select-row" onClick={event => { if (!event.target.closest('a, button, input')) selectGame(row); }}>
                 {columns?.map(column => <GameCell key={column.key} row={row} column={column} selectGame={selectGame} />)}
               </tr>)}
-              {!pageRows.length && <tr><td colSpan={columns?.length || 1}><EmptyState icon="game" title={games.length ? 'No games match your filters' : 'No upcoming games published'} description={games.length ? (trading ? 'Adjust Feed settings or clear the temporary filters to see more games.' : 'Adjust the league, lineup, or column filters to see more games.') : 'New games will appear after the next model publication.'} /></td></tr>}
+              {!pageRows.length && <tr><td colSpan={columns?.length || 1}><EmptyState icon="game" title={games.length ? 'No games match your filters' : 'No upcoming games published'} description={games.length ? (trading ? 'Adjust your league selections, Feed settings, or temporary filters to see more games.' : 'Adjust the league, lineup, or column filters to see more games.') : 'New games will appear after the next model publication.'} /></td></tr>}
             </tbody></table>
           </div>
           <div className="lol-pagination"><span>{visible.length ? currentPage * Number(pageSize) + 1 : 0}–{Math.min((currentPage + 1) * Number(pageSize), visible.length)} of {visible.length} rows</span><div><button type="button" className="button button-secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage + 1} of {totalPages}</span><button type="button" className="button button-secondary" disabled={currentPage + 1 >= totalPages} onClick={() => setPage(currentPage + 1)}>Next</button></div></div>

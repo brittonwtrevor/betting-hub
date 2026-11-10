@@ -24,7 +24,7 @@ export default function AppShell({ route, children }) {
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); main.current.focus(); }}>Skip to content</a>
     <aside className="sidebar"><Navigation route={route} compact /></aside>
     <div className="workspace">
-      <main id="main-content" className="main-content" ref={main} tabIndex={-1}>
+      <main id="main-content" className={`main-content${route.id === 'suggestions' ? ' trading-layout' : ''}`} ref={main} tabIndex={-1}>
         <button type="button" className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Icon name="menu" /></button>
         {children}
         <footer className="page-footer"><span>Betting Hub<span className="footer-dot">·</span>One workspace. The whole picture.</span><span>Times displayed in Eastern Time</span></footer>

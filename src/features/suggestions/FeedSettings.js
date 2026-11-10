@@ -7,6 +7,17 @@ const feedSports = sportOptions.filter(({ value }) => value === 'hockey' || valu
 const defaultSettings = Object.fromEntries(feedSports.map(({ value }) => [value, { enabled: true, leagues: null }]));
 const sportOf = game => game.sport || 'lol';
 
+export function feedLeagueGroups(games, settings) {
+  return feedSports.map(sport => ({
+    ...sport,
+    ...settings[sport.value],
+    options: [...new Set([
+      ...(settings[sport.value].leagues || []),
+      ...games.filter(game => sportOf(game) === sport.value).map(game => game.league).filter(Boolean),
+    ])].sort((a, b) => a.localeCompare(b)),
+  }));
+}
+
 export function readFeedSettings() {
   try {
     const saved = JSON.parse(window.localStorage.getItem(storageKey));
@@ -40,11 +51,7 @@ export default function FeedSettings({ games, settings, onSave, onClose }) {
   return <Drawer title="Feed settings" onClose={onClose}>
     <form className="feed-settings" onSubmit={event => { event.preventDefault(); onSave(draft); }}>
       <p>Choose which sports and leagues appear in the Trading Dashboard. Your choices are saved in this browser.</p>
-      {feedSports.map(({ value, label }) => {
-        const { enabled, leagues } = draft[value];
-        const options = [...new Set([
-          ...(leagues || []), ...games.filter(game => sportOf(game) === value).map(game => game.league).filter(Boolean),
-        ])].sort((a, b) => a.localeCompare(b));
+      {feedLeagueGroups(games, draft).map(({ value, label, enabled, leagues, options }) => {
         return <fieldset key={value}>
           <legend>{label}</legend>
           <label className="lol-checkbox">

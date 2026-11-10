@@ -102,6 +102,9 @@
 .confirmation-header, .confirmation-header > div:last-child { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .confirmation-header { padding: 14px 16px; font-size: 12px; }
 .confirmation-header small { display: block; color: var(--muted); margin-top: 5px; font-size: 10px; }
+.confirmation-group-title { margin: 0; font-size: 14px; }
+.confirmation-replies > summary { padding: 9px 16px; color: var(--muted); font-size: 11px; cursor: pointer; }
+.confirmation-reply { border-top: 1px solid var(--line); }
 .confirmation-raw { padding: 0 16px 12px; font-size: 11px; color: var(--muted); }
 .confirmation-raw summary { cursor: pointer; }
 .confirmation-raw p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; margin-top: 10px; }

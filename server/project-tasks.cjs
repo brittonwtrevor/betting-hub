@@ -9,11 +9,15 @@ function requiredText(value, label, limit) {
   return text;
 }
 
-function normalizeTask(input) {
-  const id = input?.id;
+function validateTaskId(id) {
   if (typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) {
     throw invalid('Invalid task ID.');
   }
+}
+
+function normalizeTask(input) {
+  const id = input?.id;
+  validateTaskId(id);
   if (!levels.includes(input.importance)) throw invalid('Select an importance level.');
   if (!levels.includes(input.effort)) throw invalid('Select an effort level.');
   const notes = input.notes ?? '';
@@ -29,7 +33,7 @@ function normalizeTask(input) {
   };
 }
 
-const taskColumns = "id, category, importance, task_name AS taskName, sport, effort, COALESCE(notes, '') AS notes";
+const taskColumns = "id, category, importance, task_name AS taskName, sport, effort, COALESCE(notes, '') AS notes, status";
 
 function createProjectTasksService({ env = process.env, createPool } = {}) {
   let pool, schema;
@@ -45,12 +49,18 @@ function createProjectTasksService({ env = process.env, createPool } = {}) {
         sport VARCHAR(80) NOT NULL,
         effort VARCHAR(6) NOT NULL,
         notes TEXT NULL,
+        status ENUM('pending', 'completed') NOT NULL DEFAULT 'pending',
         created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).then(async () => {
-        const [columns] = await pool.query("SHOW COLUMNS FROM hub_project_tasks LIKE 'notes'");
-        if (!columns.length) {
+        const [columns] = await pool.query('SHOW COLUMNS FROM hub_project_tasks');
+        const additions = [
+          ['notes', 'TEXT NULL'],
+          ['status', "ENUM('pending', 'completed') NOT NULL DEFAULT 'pending'"],
+        ];
+        for (const [name, definition] of additions) {
+          if (columns.some(column => column.Field === name)) continue;
           try {
-            await pool.query('ALTER TABLE hub_project_tasks ADD COLUMN notes TEXT NULL');
+            await pool.query(`ALTER TABLE hub_project_tasks ADD COLUMN ${name} ${definition}`);
           } catch (error) {
             // Another server instance can add the column after the lookup.
             if (error.code !== 'ER_DUP_FIELDNAME') throw error;
@@ -79,7 +89,7 @@ function createProjectTasksService({ env = process.env, createPool } = {}) {
           'INSERT INTO hub_project_tasks (id, category, importance, task_name, sport, effort, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
           [task.id, task.category, task.importance, task.taskName, task.sport, task.effort, task.notes],
         );
-        return task;
+        return { ...task, status: 'pending' };
       } catch (error) {
         if (error.code !== 'ER_DUP_ENTRY') throw error;
         // A retry after a lost response must leave the original task intact.
@@ -87,6 +97,16 @@ function createProjectTasksService({ env = process.env, createPool } = {}) {
         if (saved && Object.keys(task).every(key => task[key] === saved[key])) return saved;
         throw invalid('This task ID has already been saved. Refresh tasks and try again.', 409);
       }
+    },
+    async updateStatus(id, input) {
+      validateTaskId(id);
+      const status = input?.status;
+      if (!['pending', 'completed'].includes(status)) throw invalid('Select Pending or Completed.');
+      const db = await database();
+      await db.execute('UPDATE hub_project_tasks SET status = ? WHERE id = ?', [status, id]);
+      const [[task]] = await db.execute('SELECT id, status FROM hub_project_tasks WHERE id = ?', [id]);
+      if (!task) throw invalid('Task not found. Refresh tasks and try again.', 404);
+      return task;
     },
     async close() { if (pool) await pool.end(); },
   };

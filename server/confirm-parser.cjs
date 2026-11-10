@@ -20,8 +20,7 @@ function partnerFor(message, contexts) {
   }
   return { id: `telegram:${message.chatId}`, name: message.chat, chatId: String(message.chatId) };
 }
-function defaultFields(message) {
-  const item = eligibleContexts(message)[0];
+function defaultFields(message, item = eligibleContexts(message)[0]) {
   const context = item?.context;
   const sides = new Set(context?.markets?.map(market => /^[ab]:/.test(market.id) ? market.id[0] : null).filter(Boolean));
   const team = sides.size === 1 ? context.game[`team_${[...sides][0]}`] : context?.markets?.every(market => market.id.startsWith('match:')) ? 'Match' : '';

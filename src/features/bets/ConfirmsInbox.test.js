@@ -23,15 +23,18 @@ beforeEach(() => {
     if (url === '/api/send-drafts') return response({ drafts: [] });
     if (options.method === 'PATCH') {
       const input = JSON.parse(options.body);
-      const bet = { ...input, sourceId: id, revision: input.revision + 1, ...normalizeFields(input) };
-      stored.sources[0].bets = [bet]; return response({ bet });
+      const bet = { ...input, revision: input.revision + 1, ...normalizeFields(input) };
+      const source = stored.sources.find(item => item.id === bet.sourceId);
+      source.bets = source.bets.map(item => item.id === bet.id ? bet : item);
+      return response({ bet });
     }
     if (options.method === 'DELETE') {
       stored.sources[0].bets = []; stored.sources[0].deletedBetCount = 1;
       return response({ bet: { id: base.id, deletedAt: new Date().toISOString(), notification: { id: 'delete-receipt', kind: 'delete', status: 'pending' } } });
     }
     if (url.endsWith('/manual')) {
-      const bet = { ...base, id: 'bet-2', risk: null, odds: null, complete: false };
+      const { betId = base.betId } = JSON.parse(options.body);
+      const bet = { ...base, betId, id: 'bet-2', risk: null, odds: null, complete: false };
       stored.sources[0].bets.push(bet); stored.sources[0].revision++; return response({ bet });
     }
     return response(JSON.parse(JSON.stringify(stored)));
@@ -107,6 +110,31 @@ test('loads editable wager fields, grading options and original source without c
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });
 
+test('groups separate replies by Bet ID and keeps each wager independently editable', async () => {
+  const anotherBet = { ...base, id: 'bet-2', bet: 'Map 1', risk: 25, sourceId: 'reply-2' };
+  const anotherPartner = { ...base, id: 'bet-3', partnerId: 'kenny', partnerName: 'Kenny', sourceId: 'reply-3' };
+  const anotherId = { ...anotherPartner, id: 'bet-4', betId: 'BOS145' };
+  stored.sources.push(
+    { ...stored.sources[0], id: 'reply-2', message: { ...reply, messageId: 11 }, bets: [anotherBet] },
+    { ...stored.sources[0], id: 'reply-3', message: { ...reply, messageId: 12, betIds: ['HAN187', 'BOS145'] }, bets: [anotherPartner, anotherId] },
+  );
+  render(<ConfirmsInbox />);
+  const grouped = within(await screen.findByRole('table', { name: 'Bets for HAN187' }));
+  const other = within(screen.getByRole('table', { name: 'Bets for BOS145' }));
+  expect(grouped.getAllByRole('row')).toHaveLength(4);
+  expect(grouped.getAllByRole('cell', { name: 'Trevor' })).toHaveLength(2);
+  expect(grouped.getByRole('cell', { name: 'Kenny' })).toBeInTheDocument();
+  expect(other.getAllByRole('row')).toHaveLength(2);
+  expect(other.getByLabelText('Risk for bet-4')).toBeInTheDocument();
+
+  fireEvent.change(grouped.getByLabelText('Risk for bet-2'), { target: { value: '75' } });
+  fireEvent.click(grouped.getAllByRole('button', { name: 'Save', exact: true }).find(button => !button.disabled));
+  await waitFor(() => expect(stored.sources[1].bets[0].risk).toBe(75));
+  expect(grouped.getByLabelText('Risk for bet-1')).toHaveValue('1');
+  expect(grouped.getByLabelText('Risk for bet-3')).toHaveValue('1');
+  expect(other.getByLabelText('Risk for bet-4')).toHaveValue('1');
+});
+
 test('defaults to seven Eastern dates, filters individual bets by sport, and expands with the date slider', async () => {
   stored.sources[0].bets[0].sport = 'lol';
   const hockeyReply = (messageId, betDate, date) => ({
@@ -119,19 +147,20 @@ test('defaults to seven Eastern dates, filters individual bets by sport, and exp
   stored.sources.push(older, recent);
   render(<ConfirmsInbox />);
   await screen.findByLabelText('Bet ID for bet-1');
-  const replyOrder = () => screen.getAllByRole('article').map(item => item.getAttribute('aria-label').split(' ')[1]);
-  expect(replyOrder()).toEqual(['10', '12']);
+  const table = within(screen.getByRole('table', { name: 'Bets for HAN187' }));
+  const rowOrder = () => table.getAllByLabelText(/^Bet ID for /).map(item => item.getAttribute('aria-label').replace('Bet ID for ', ''));
+  expect(rowOrder()).toEqual(['bet-1', 'mixed-hockey', 'bet-12']);
   fireEvent.change(screen.getByRole('combobox', { name: 'Sport' }), { target: { value: 'hockey' } });
   expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument();
-  expect(within(screen.getByRole('article', { name: 'Reply 10 from trevor_partner' })).getByLabelText('Risk for mixed-hockey')).toBeInTheDocument();
+  expect(table.getByLabelText('Risk for mixed-hockey')).toBeInTheDocument();
   fireEvent.click(screen.getByText('Bet dates (ET) · Last 7 days'));
   const slider = screen.getByRole('slider', { name: 'Adjust start date' });
   fireEvent.change(slider, { target: { value: slider.min } });
-  expect(replyOrder()).toEqual(['10', '12', '11']);
+  expect(rowOrder()).toEqual(['mixed-hockey', 'bet-12', 'bet-11']);
   fireEvent.click(screen.getByRole('button', { name: 'Reset dates' }));
-  expect(replyOrder()).toEqual(['10', '12']);
+  expect(rowOrder()).toEqual(['mixed-hockey', 'bet-12']);
   fireEvent.click(screen.getByRole('button', { name: 'All dates' }));
-  expect(replyOrder()).toEqual(['10', '12', '11']);
+  expect(rowOrder()).toEqual(['mixed-hockey', 'bet-12', 'bet-11']);
 });
 
 test('edits wager fields, saves a WIN and persists net P/L', async () => {
@@ -177,10 +206,12 @@ test('polling does not overwrite unsaved corrections and failed saves retain edi
 
 test('manual entry remains available when AI is not configured', async () => {
   stored.sources[0].bets = []; stored.sources[0].status = 'pending'; stored.parser.configured = false;
+  stored.sources[0].eligibleBetIds = ['HAN187', 'BOS145'];
   render(<ConfirmsInbox />); await screen.findByText(/AI parsing needs/);
-  expect(screen.getByRole('button', { name: 'Retry AI' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Add bet manually' }));
-  await screen.findByLabelText('Risk for bet-2');
+  const group = within(screen.getByRole('article', { name: 'Bet ID BOS145' }));
+  expect(group.getByRole('button', { name: 'Retry AI' })).toBeDisabled();
+  fireEvent.click(group.getByRole('button', { name: 'Add bet manually' }));
+  await group.findByLabelText('Risk for bet-2');
   expect(screen.getByLabelText('Risk for bet-2')).toHaveValue('');
 });
 
