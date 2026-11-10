@@ -56,13 +56,21 @@ async function rscript(args) {
   if (!executable) throw new Error('Set FEED_MONITOR_REAL_RSCRIPT to the existing Rscript executable.');
   const script = args.find(arg => arg.endsWith('.R'));
   const track = script && stageFeeds[path.basename(script)] && !args.some(arg => ['--dry-run', '--no-write', '--help', '-h'].includes(arg));
+  const hockeyAlert = process.env.FEED_MONITOR_HOCKEY_PIPELINE === '1' &&
+    script && path.basename(script) === 'EP_HOCKEY_UPDATED_TELEGRAM.R';
   const start = Date.now();
-  const result = await run(executable, args, { capture: !!track });
+  // Under cron's C locale, R can render flag emoji as HTML-looking byte markers such as <f0>.
+  const env = hockeyAlert ? { ...process.env, LC_ALL: 'en_US.UTF-8' } : undefined;
+  const result = await run(executable, args, { capture: !!track, env });
   if (track) {
     const at = new Date().toISOString();
     const reportFile = process.env.LOL_PIPELINE_STATUS_FILE;
     const report = reportFile ? await fs.readFile(reportFile, 'utf8').catch(() => '') : '';
     await publish(stageEvents(script, { ...result, at, durationMs: Date.parse(at) - start, report })).catch(reportPublishError);
+  }
+  if (hockeyAlert && result.code !== 0 && result.code < 128) {
+    console.error(`Hockey Telegram update failed (exit ${result.code}). Continuing to Betting Hub upload.`);
+    return 0;
   }
   return result.code;
 }
@@ -191,7 +199,11 @@ async function main([mode, ...args]) {
       if (result.code !== 0) return result.code;
     }
   }
-  if (mode === 'hockey') result = await run('zsh', [path.join(hub, 'scripts/run-hockey-pipeline.zsh'), ...args], { env });
+  if (mode === 'hockey') {
+    result = await run('zsh', [path.join(hub, 'scripts/run-hockey-pipeline.zsh'), ...args], {
+      env: { ...env, FEED_MONITOR_HOCKEY_PIPELINE: '1' },
+    });
+  }
   if (mode === 'lol') result = await run('sh', [path.join(lol, 'pipelines/full_pipeline.sh'), ...args], { env, cwd: lol });
   if (mode === 'hockey-rosters') result = await run(shim, ['CURRENT_ROSTERS.R', ...args], { env, cwd: hockeyApi });
   if (mode === 'hockey-odds') result = await run('sh', [odds, ...args], { env });

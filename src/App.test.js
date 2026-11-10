@@ -60,13 +60,13 @@ test('supports every workspace and sports deep links, including hash navigation'
   expect(screen.getByRole('link', { name: 'Back to Monitoring' })).toHaveAttribute('href', '#/');
 });
 
-test('saves all five project task fields and reloads the saved task from the API', async () => {
+test('saves project task fields and multiline notes and reloads the saved task from the API', async () => {
   window.history.replaceState(null, '', '/#/project-management');
   const id = '0e6f4608-8a57-4b8f-8289-6c1cd2e7fd63';
   const originalCrypto = Object.getOwnPropertyDescriptor(window, 'crypto');
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => id } });
   const defaultFetch = fetch.getMockImplementation();
-  const fields = { category: 'Data', importance: 'High', taskName: 'Refresh goalie inputs', sport: 'Hockey', effort: 'Medium' };
+  const fields = { category: 'Data', importance: 'High', taskName: 'Refresh goalie inputs', sport: 'Hockey', effort: 'Medium', notes: 'Use the latest rosters.\nKeep a fallback goalie.' };
   let savedTask;
   fetch.mockImplementation(async (url, options) => {
     if (url !== '/api/project-tasks') return defaultFetch(url, options);
@@ -81,14 +81,19 @@ test('saves all five project task fields and reloads the saved task from the API
     for (const [label, value] of Object.entries({ Category: fields.category, Importance: fields.importance, 'Task Name': fields.taskName, Sport: fields.sport, Effort: fields.effort })) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
+    const notes = screen.getByRole('textbox', { name: 'Notes (optional)' });
+    expect(notes).not.toBeRequired();
+    fireEvent.change(notes, { target: { value: fields.notes } });
     fireEvent.click(screen.getByRole('button', { name: 'Add task' }));
     await screen.findByRole('cell', { name: fields.taskName });
     expect(savedTask).toEqual({ id, ...fields });
 
     unmount();
     render(<App />);
-    const row = await screen.findByRole('row', { name: 'Data High Refresh goalie inputs Hockey Medium' });
-    expect(within(row).getAllByRole('cell')).toHaveLength(5);
+    const row = await screen.findByRole('row', { name: /Data High Refresh goalie inputs Hockey Medium/ });
+    const cells = within(row).getAllByRole('cell');
+    expect(cells).toHaveLength(6);
+    expect(cells[5].textContent).toBe(fields.notes);
   } finally {
     if (originalCrypto) Object.defineProperty(window, 'crypto', originalCrypto);
     else delete window.crypto;

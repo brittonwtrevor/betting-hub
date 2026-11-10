@@ -12,7 +12,7 @@ From betting-hub, after the hockey export completes:
 
 ```sh
 node scripts/publish-hockey-future-games.cjs --dry-run
-zsh scripts/run-hockey-pipeline.zsh --upload-only
+zsh RUNMODEL.txt hockey --upload-only
 ```
 
 The uploader automatically reads the shared `LOL-MODEL-V2/.env` connection settings (`LOL_DO_DB_*`) from the adjacent LoL repository, without copying or printing credentials. This is the same database connection used by the LoL publisher and app. Explicit environment variables take priority. The upload-only command detects Node even when it is absent from PATH and does not run the hockey model, deploy Shiny, or send Telegram messages.
@@ -24,11 +24,11 @@ Only `hub_hockey_future_games` is created or changed. It contains `row_number`, 
 ## Full pipeline with automatic upload
 
 ```sh
-zsh /Users/trevorbritton/projects/betting-hub/scripts/run-hockey-pipeline.zsh
+zsh /Users/trevorbritton/projects/betting-hub/RUNMODEL.txt hockey
 ```
 
-This wrapper runs the existing `EP-HOCKEY-DB-MODELS/RUNMODEL.txt` unchanged, including Shiny deployment and Telegram, then uploads the CSV using the shared LoL connection only after that pipeline succeeds. Existing jobs that call the original `RUNMODEL.txt` do not automatically start publishing; point the job at this wrapper to enable the upload. `HOCKEY_NODE_BIN` can specify a Node executable for cron; the wrapper also detects the desktop runtime when Node is absent from PATH.
+This command records Monitoring telemetry, runs the existing `EP-HOCKEY-DB-MODELS/RUNMODEL.txt`, and uploads the CSV using the shared LoL connection after Shiny deploys and the Telegram step runs. The monitored runner uses UTF-8 for the Telegram alert and logs any notification failure before continuing to the upload. Point scheduled jobs at the Betting Hub runner to include the upload. Set `FEED_MONITOR_NODE` or `HOCKEY_NODE_BIN` to specify a Node executable for cron. See the [Betting Hub refresh runbook](feed-monitoring.md) for LoL and the other collector commands.
 
-Neither the original runner, model scripts, SQLite database, Shiny code, CSV files, nor Shiny's bet/notes storage is changed. A DigitalOcean outage cannot stop the existing Shiny deployment because the upload runs afterward. The wrapper reports a nonzero status if its final upload fails; the last committed hockey publication remains available. If an earlier Shiny or Telegram step fails, the wrapper skips publication and can be followed by the upload-only command once the export is known to be complete.
+Shiny deploys before the DigitalOcean upload. The wrapper reports a nonzero status if its final upload fails, and the last committed Hockey publication remains available. If Shiny deployment fails, the wrapper stops. Use the upload-only command once the export is known to be complete.
 
 Deploy the betting-hub changes through the existing app deployment flow. A missing publication returns an actionable 503 response. Check **Hockey → Future Games → Refresh data** after uploading. The publication timestamp and original model-export timestamp are shown separately, so uploading an older export is visible.

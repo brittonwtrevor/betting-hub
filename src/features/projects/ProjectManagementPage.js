@@ -12,7 +12,8 @@ const fields = [
   { key: 'sport', label: 'Sport', maxLength: 80 },
   { key: 'effort', label: 'Effort', options: levels },
 ];
-const emptyTask = { category: '', importance: '', taskName: '', sport: '', effort: '' };
+const columns = [...fields, { key: 'notes', label: 'Notes' }];
+const emptyTask = { category: '', importance: '', taskName: '', sport: '', effort: '', notes: '' };
 
 async function requestTasks(options, fallback) {
   const response = await fetch(endpoint, { credentials: 'same-origin', cache: 'no-store', ...options });
@@ -104,6 +105,12 @@ export default function ProjectManagementPage() {
               </select> : <input {...props} maxLength={maxLength} list={key === 'sport' ? 'project-sports' : undefined} />}
             </label>;
           })}
+          <label className="project-notes-field">
+            <span>Notes (optional)</span>
+            <textarea rows={4} maxLength={5000} disabled={saving} value={draft.notes}
+              onChange={event => updateDraft('notes', event.target.value)}
+              placeholder="Add task specs, requirements, or context" />
+          </label>
         </div>
         <datalist id="project-sports">
           {sports.map(sport => <option key={sport.id} value={sport.label} />)}
@@ -124,10 +131,10 @@ export default function ProjectManagementPage() {
       {loadError && <p role="alert" className="project-message">{loadError}</p>}
       <div className="table-scroll">
         <table className="data-table project-table" aria-label="Project tasks">
-          <thead><tr>{fields.map(({ key, label }) => <th key={key} scope="col">{label}</th>)}</tr></thead>
+          <thead><tr>{columns.map(({ key, label }) => <th key={key} scope="col">{label}</th>)}</tr></thead>
           <tbody>
-            {tasks.map(task => <tr key={task.id}>{fields.map(({ key }) => <td key={key}>{task[key]}</td>)}</tr>)}
-            {!loading && !loadError && !tasks.length && <tr><td colSpan={fields.length}>No tasks yet.</td></tr>}
+            {tasks.map(task => <tr key={task.id}>{columns.map(({ key }) => <td key={key} className={key === 'notes' ? 'project-notes-cell' : undefined}>{task[key]}</td>)}</tr>)}
+            {!loading && !loadError && !tasks.length && <tr><td colSpan={columns.length}>No tasks yet.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -16,6 +16,8 @@ function normalizeTask(input) {
   }
   if (!levels.includes(input.importance)) throw invalid('Select an importance level.');
   if (!levels.includes(input.effort)) throw invalid('Select an effort level.');
+  const notes = input.notes ?? '';
+  if (typeof notes !== 'string' || notes.length > 5000) throw invalid('Enter notes of up to 5,000 characters.');
   return {
     id,
     category: requiredText(input.category, 'category', 80),
@@ -23,10 +25,11 @@ function normalizeTask(input) {
     taskName: requiredText(input.taskName, 'task name', 200),
     sport: requiredText(input.sport, 'sport', 80),
     effort: input.effort,
+    notes: notes.trim(),
   };
 }
 
-const taskColumns = 'id, category, importance, task_name AS taskName, sport, effort';
+const taskColumns = "id, category, importance, task_name AS taskName, sport, effort, COALESCE(notes, '') AS notes";
 
 function createProjectTasksService({ env = process.env, createPool } = {}) {
   let pool, schema;
@@ -41,8 +44,19 @@ function createProjectTasksService({ env = process.env, createPool } = {}) {
         task_name VARCHAR(200) NOT NULL,
         sport VARCHAR(80) NOT NULL,
         effort VARCHAR(6) NOT NULL,
+        notes TEXT NULL,
         created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(error => {
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).then(async () => {
+        const [columns] = await pool.query("SHOW COLUMNS FROM hub_project_tasks LIKE 'notes'");
+        if (!columns.length) {
+          try {
+            await pool.query('ALTER TABLE hub_project_tasks ADD COLUMN notes TEXT NULL');
+          } catch (error) {
+            // Another server instance can add the column after the lookup.
+            if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+          }
+        }
+      }).catch(error => {
         schema = null;
         throw error;
       });
@@ -62,8 +76,8 @@ function createProjectTasksService({ env = process.env, createPool } = {}) {
       const db = await database();
       try {
         await db.execute(
-          'INSERT INTO hub_project_tasks (id, category, importance, task_name, sport, effort) VALUES (?, ?, ?, ?, ?, ?)',
-          [task.id, task.category, task.importance, task.taskName, task.sport, task.effort],
+          'INSERT INTO hub_project_tasks (id, category, importance, task_name, sport, effort, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [task.id, task.category, task.importance, task.taskName, task.sport, task.effort, task.notes],
         );
         return task;
       } catch (error) {

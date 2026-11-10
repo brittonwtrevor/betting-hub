@@ -152,7 +152,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         const chunks = [];
         for await (const chunk of request) {
           size += Buffer.byteLength(chunk);
-          if (size > 8192) return json(413, { message: 'This task request is too large.' });
+          if (size > 32 * 1024) return json(413, { message: 'This task request is too large.' });
           chunks.push(Buffer.from(chunk));
         }
         let body;

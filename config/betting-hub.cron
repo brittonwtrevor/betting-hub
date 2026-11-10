@@ -1,0 +1,14 @@
+# Betting Hub scheduled refreshes, in the Mac's local time (Eastern).
+PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
+
+# Hockey odds and Monitoring telemetry, every 10 minutes.
+*/10 * * * * /usr/bin/caffeinate -i /bin/zsh /Users/trevorbritton/projects/betting-hub/RUNMODEL.txt hockey-odds >> "$HOME/Library/Logs/betting-hub-hockey-odds.log" 2>&1
+
+# Hockey models and publication, 5:00 a.m. and 3:00 p.m. daily.
+0 5,15 * * * /usr/bin/caffeinate -i /bin/zsh /Users/trevorbritton/projects/betting-hub/RUNMODEL.txt hockey >> "$HOME/Library/Logs/betting-hub-hockey.log" 2>&1
+
+# League of Legends data, models, and publication, 6:00 a.m. and 6:00 p.m. daily.
+0 6,18 * * * /usr/bin/caffeinate -i /bin/zsh /Users/trevorbritton/projects/betting-hub/RUNMODEL.txt lol >> "$HOME/Library/Logs/betting-hub-lol.log" 2>&1
+
+# Elite Prospects roster refresh, Mondays at 4:00 a.m.
+0 4 * * 1 /usr/bin/caffeinate -i /bin/zsh /Users/trevorbritton/projects/betting-hub/RUNMODEL.txt hockey-rosters >> "$HOME/Library/Logs/betting-hub-hockey-rosters.log" 2>&1

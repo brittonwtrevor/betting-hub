@@ -6,7 +6,7 @@
   margin-bottom: 14px;
 }
 .project-fields label { display: grid; gap: 6px; font-size: 13px; font-weight: 550; }
-.project-fields input, .project-fields select {
+.project-fields input, .project-fields select, .project-fields textarea {
   width: 100%;
   min-width: 0;
   padding: 8px 10px;
@@ -16,9 +16,12 @@
   background: var(--paper);
   font-weight: 400;
 }
+.project-notes-field { grid-column: 1 / -1; }
+.project-notes-field textarea { font-family: inherit; font-size: inherit; resize: vertical; }
 .project-form .button, .project-table td { font-size: 13px; }
 .project-table th { color: var(--ink); font-size: 12px; }
 .project-table td { overflow-wrap: anywhere; }
+.project-table .project-notes-cell { width: 40%; min-width: 200px; white-space: pre-wrap; }
 .project-message { margin: 0 22px 14px; }
 .project-form .project-message { margin: 10px 0 0; }
 .project-message[role="alert"] { color: #b13d3d; }
