@@ -19,8 +19,19 @@
 .lol-table td.lol-series-fair { background: #eef0f2; }
 .lol-table td.trading-market-cell { white-space: pre-line; line-height: 1.5; min-width: 135px; }
 .lol-table td.trading-positive-edge { background: #e6f4e6; color: #276342; font-weight: 600; }
-.trading-goalie { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.trading-table th, .trading-table td { padding-left: 10px; padding-right: 10px; }
+.trading-table td { padding-top: 9px; padding-bottom: 9px; }
+.trading-table th:first-child { width: 1%; }
+.trading-sport { text-align: center; }
+.trading-sport svg { vertical-align: middle; }
+.trading-table .lol-column-filters select { width: 52px; height: 28px; border: 1px solid #e2e7ef; border-radius: 4px; background: #fff; color: #586a83; font-size: 10px; }
 .lol-pagination { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 22px; border-top: 1px solid var(--line); color: #7e8b9e; font-size: 10px; flex-wrap: wrap; }
 .lol-pagination > div { display: flex; align-items: center; gap: 12px; }
 .lol-source { gap: 8px; flex-wrap: wrap; }
+.feed-settings { display: grid; gap: 18px; }
+.feed-settings p { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.feed-settings fieldset { min-width: 0; padding: 8px 14px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.feed-settings legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
+.feed-league-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; }
+.feed-settings-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 @media (max-width: 760px) { .lol-controls .search-field { max-width: none; } .lol-checkbox { padding-top: 0; } .lol-pagination { padding: 14px 16px; } }

@@ -4,7 +4,7 @@ import { easternTime, parseDate } from '../sports/lol/upcoming';
 import { usePartners } from '../partners/usePartners';
 import { useSends } from './SendsContext';
 import { formatOdds, gameDescription } from './markets';
-import { BetOrder, sortByBetOrder, sportLabel } from './BetOrder';
+import BetFilters, { defaultBetDates, easternBetDay, matchesBetDates, newestDateFirst } from './BetFilters';
 import ConfirmsInbox from './ConfirmsInbox';
 import RawBetData from './RawBetData';
 
@@ -85,29 +85,39 @@ export default function ActiveBetsPage({ tab = 'sends' }) {
   const { drafts, load, save, send, remove } = useSends();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [sendOrder, setSendOrder] = useState('newest');
-  const [confirmOrder, setConfirmOrder] = useState('newest');
+  const [sendSport, setSendSport] = useState('all');
+  const [sendDates, setSendDates] = useState(null);
+  const [confirmFilters, setConfirmFilters] = useState(null);
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
     try { await load(); } catch (failure) { setError(failure.message); }
     finally { setLoading(false); }
   }, [load]);
   useEffect(() => { if (tab === 'sends') refresh(); }, [refresh, tab]);
-  const orderedDrafts = tab === 'sends' && !loading ? sortByBetOrder(drafts, sendOrder, draft => ({
-    date: parseDate(draft.game.begin_at)?.toISOString() || '',
-    sport: sportLabel(draft.game.sport || 'lol'),
-  })) : [];
+  const defaults = defaultBetDates();
+  const draftRows = tab === 'sends' && !loading ? drafts.map(draft => {
+    const time = parseDate(draft.game.begin_at);
+    const day = easternBetDay(time);
+    return { draft, day, time: time?.toISOString(),
+      visible: (sendSport === 'all' || (draft.game.sport || 'lol') === sendSport) && matchesBetDates(day, sendDates ?? defaults) };
+  }).sort((a, b) => newestDateFirst(a.time, b.time)) : [];
   return <>
     <div className="sends-toolbar"><div className="segments" role="tablist" aria-label="Active Bets">{Object.keys(tabs).map(value => <button key={value} type="button" className={`segment${tab === value ? ' active' : ''}`} role="tab" aria-selected={tab === value} aria-controls={`${value}-panel`} id={`${value}-tab`} onClick={() => { window.location.hash = value === 'sends' ? '/bets' : `/bets?tab=${value}`; }}>{tabs[value]}</button>)}</div>{tab === 'sends' && <div className="sends-toolbar-actions">
-      <BetOrder value={sendOrder} onChange={setSendOrder} dateLabel="Game date" />
+      <BetFilters sport={sendSport} onSportChange={setSendSport} dates={sendDates} onDatesChange={setSendDates}
+        defaults={defaults} defaultLabel="Today onward" dateLabel="Game dates" days={draftRows.map(row => row.day)} />
       <button type="button" className="button button-secondary" onClick={() => { void refresh(); void partnerRegistry.reload(); }} disabled={loading || partnerRegistry.loading}>{loading || partnerRegistry.loading ? 'Loading…' : 'Refresh Sends'}</button>
     </div>}</div>
     {tab === 'raw' && <div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab"><RawBetData /></div>}
-    {tab === 'confirms' && <div id="confirms-panel" role="tabpanel" aria-labelledby="confirms-tab"><ConfirmsInbox order={confirmOrder} onOrderChange={setConfirmOrder} /></div>}
+    {tab === 'confirms' && <div id="confirms-panel" role="tabpanel" aria-labelledby="confirms-tab"><ConfirmsInbox filters={confirmFilters} onFiltersChange={setConfirmFilters} /></div>}
     {tab === 'sends' && <div id="sends-panel" role="tabpanel" aria-labelledby="sends-tab" className="sends-list">
       {error && <p role="alert" className="sends-error">{error}</p>}
       {partnerRegistry.error && <p role="alert" className="sends-error">{partnerRegistry.error} Refresh Sends to reload partner destinations.</p>}
-      {loading ? <p role="status">Loading Sends…</p> : orderedDrafts.length ? orderedDrafts.map(draft => <SendCard key={draft.id} draft={draft} registeredPartners={partnerRegistry.partners} partnersReady={!partnerRegistry.loading && !partnerRegistry.error} onSave={save} onSend={send} onRemove={remove} />) : !error && <Panel><EmptyState icon="inbox" title="No Sends drafts yet" description="Select a game in Hockey, League of Legends, or Trading Dashboard, check the markets you want, and add them here." /></Panel>}
+      {loading ? <p role="status">Loading Sends…</p> : <>
+        {draftRows.map(({ draft, visible }) => <div key={draft.id} hidden={!visible}><SendCard draft={draft} registeredPartners={partnerRegistry.partners} partnersReady={!partnerRegistry.loading && !partnerRegistry.error} onSave={save} onSend={send} onRemove={remove} /></div>)}
+        {!error && !draftRows.some(row => row.visible) && <Panel><EmptyState icon="inbox"
+          title={draftRows.length ? 'No Sends match your filters' : 'No Sends drafts yet'}
+          description={draftRows.length ? 'Change the sport or date range to see more Sends.' : 'Select markets from a sports dashboard to add them here.'} /></Panel>}
+      </>}
     </div>}
   </>;
 }

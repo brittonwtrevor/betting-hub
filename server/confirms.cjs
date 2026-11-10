@@ -192,19 +192,32 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
     async list() {
       const receiver = await sync();
       const db = await database();
-      const [sources] = await db.query('SELECT * FROM hub_confirm_sources ORDER BY updated_at DESC, id LIMIT 100');
-      const ids = sources.map(row => row.id);
-      const [bets] = ids.length ? await db.execute(`SELECT * FROM hub_confirm_bets WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, id`, ids) : [[]];
-      const [receipts] = ids.length ? await db.execute(`SELECT id, bet_row_id, kind, status, last_error, updated_at FROM hub_confirm_notifications
-        WHERE source_id IN (${ids.map(() => '?').join(', ')}) ORDER BY created_at, bet_revision, id`, ids) : [[]];
-      return { sources: sources.map(row => ({ id: row.id, revision: row.revision, status: row.status, ...decode(row.payload),
-        error: row.last_error, deletedBetCount: bets.filter(bet => bet.source_id === row.id && decode(bet.payload).deletedAt).length,
-        deletionNotifications: receipts.filter(receipt => receipt.kind === 'delete' && bets.some(bet => bet.id === receipt.bet_row_id && bet.source_id === row.id))
-          .map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at,
-            betId: decode(bets.find(bet => bet.id === receipt.bet_row_id).payload).betId })),
-        bets: bets.filter(bet => bet.source_id === row.id && !decode(bet.payload).deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
-          revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...decode(bet.payload),
-          notifications: receipts.filter(receipt => receipt.bet_row_id === bet.id).map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at })) })) })),
+      const [rows] = await db.query('SELECT * FROM hub_confirm_sources ORDER BY updated_at DESC, id');
+      const sources = [];
+      // Bound each IN query while allowing the date filter to reach the full history.
+      for (let offset = 0; offset < rows.length; offset += 100) {
+        const batch = rows.slice(offset, offset + 100);
+        const ids = batch.map(row => row.id);
+        const placeholders = ids.map(() => '?').join(', ');
+        const [bets] = await db.execute(`SELECT * FROM hub_confirm_bets WHERE source_id IN (${placeholders}) ORDER BY created_at, id`, ids);
+        const [receipts] = await db.execute(`SELECT id, bet_row_id, kind, status, last_error, updated_at FROM hub_confirm_notifications
+          WHERE source_id IN (${placeholders}) ORDER BY created_at, bet_revision, id`, ids);
+        for (const row of batch) {
+          const payload = decode(row.payload);
+          const savedBets = bets.filter(bet => bet.source_id === row.id).map(bet => ({ ...bet, fields: decode(bet.payload) }));
+          const byBet = new Map(savedBets.map(bet => [bet.id, bet.fields]));
+          const sports = [...new Set(eligibleContexts(payload.message).map(item => item.context.game.sport).filter(Boolean))];
+          sources.push({ id: row.id, revision: row.revision, status: row.status, ...payload, sports,
+            error: row.last_error, deletedBetCount: savedBets.filter(bet => bet.fields.deletedAt).length,
+            deletionNotifications: receipts.filter(receipt => receipt.kind === 'delete' && byBet.has(receipt.bet_row_id))
+              .map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at,
+                betId: byBet.get(receipt.bet_row_id).betId })),
+            bets: savedBets.filter(bet => !bet.fields.deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
+              revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...bet.fields,
+              notifications: receipts.filter(receipt => receipt.bet_row_id === bet.id).map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at })) })) });
+        }
+      }
+      return { sources,
       receiver, parser: { configured: parser.configured(), enabled: env.DO_INFERENCE_ENABLED !== 'false', model: parser.model(), error: workerError } };
     },
     async update(id, input, actor = 'app') {

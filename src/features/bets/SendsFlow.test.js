@@ -1,10 +1,13 @@
 import React from 'react';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../../App';
 import { allMarkets } from './markets';
-const game = { sport: 'lol', match_id: '11', game_id: '101', team_a: 'Alpha', team_b: 'Bravo', league: 'LCK', begin_at: '2026-11-05 19:00:00', series_format: 'BO3', xgb_map1: -150, bo3_price: -184, islastlineup: 1 };
-const hockey = { id: 'h1', dateTime: '2026-11-05T01:00:00+0300', leagueName: 'NHL', homeTeamName: 'Boston Bruins', visitingTeamName: 'Toronto', winoddsfulltime: -150, away_winoddsfulltime: 150, goalie_team: 'Home goalie', goalie_opp: 'Away goalie' };
+import { easternBetDay } from './BetFilters';
+const today = easternBetDay(new Date());
+const relativeDay = days => new Date(Date.parse(today) + days * 86400000).toISOString().slice(0, 10);
+const game = { sport: 'lol', match_id: '11', game_id: '101', team_a: 'Alpha', team_b: 'Bravo', league: 'LCK', begin_at: `${today} 19:00:00`, series_format: 'BO3', xgb_map1: -150, bo3_price: -184, islastlineup: 1 };
+const hockey = { id: 'h1', dateTime: `${relativeDay(1)}T01:00:00+0300`, leagueName: 'NHL', homeTeamName: 'Boston Bruins', visitingTeamName: 'Toronto', winoddsfulltime: -150, away_winoddsfulltime: 150, goalie_team: 'Home goalie', goalie_opp: 'Away goalie' };
 const columns = [
   { key: 'series_format', label: 'Format' }, { key: 'begin_at', label: 'Start time (ET)', type: 'date' },
   { key: 'league', label: 'League' }, { key: 'team_a', label: 'Team A' }, { key: 'team_b', label: 'Team B' },
@@ -50,29 +53,34 @@ beforeEach(() => {
 });
 afterEach(() => { delete global.fetch; window.localStorage.clear(); });
 
-test('sorts Sends by game start or sport while keeping unsaved card edits', async () => {
+test('filters Sends independently by sport and Eastern game date, with all dates and reset', async () => {
   window.history.replaceState(null, '', '/#/bets');
   const draft = (id, sport, begin_at) => ({
     id, game: { ...game, sport, begin_at, team_a: id }, revision: 1, markets: [], recipients: [], notes: '',
   });
   saved = [
-    draft('LoL match', 'lol', '2026-11-05 19:00:00'),
-    draft('Earlier hockey', 'hockey', '2026-11-05T19:30:00+01:00'),
-    draft('Later hockey', 'hockey', '2026-11-06T00:00:00Z'),
+    draft('LoL match', 'lol', game.begin_at),
+    draft('Yesterday hockey', 'hockey', `${today}T01:00:00Z`),
+    draft('Tomorrow hockey', 'hockey', `${relativeDay(1)}T19:00:00Z`),
   ];
   const user = userEvent.setup();
   render(<App />);
   const card = await screen.findByRole('article', { name: 'LoL match vs Bravo' });
   const cardOrder = () => screen.getAllByRole('article').map(item => item.getAttribute('aria-label'));
-  const sort = screen.getByRole('combobox', { name: 'Sort by' });
-  expect(cardOrder()).toEqual(['Later hockey vs Bravo', 'LoL match vs Bravo', 'Earlier hockey vs Bravo']);
+  const sport = screen.getByRole('combobox', { name: 'Sport' });
+  expect(cardOrder()).toEqual(['Tomorrow hockey vs Bravo', 'LoL match vs Bravo']);
   await user.type(within(card).getByLabelText('Notes'), 'Keep this note');
-  await user.selectOptions(sort, 'oldest');
-  expect(cardOrder()).toEqual(['Earlier hockey vs Bravo', 'LoL match vs Bravo', 'Later hockey vs Bravo']);
-  await user.selectOptions(sort, 'sport-newest');
-  expect(cardOrder()).toEqual(['Later hockey vs Bravo', 'Earlier hockey vs Bravo', 'LoL match vs Bravo']);
-  await user.selectOptions(sort, 'sport-oldest');
-  expect(cardOrder()).toEqual(['Earlier hockey vs Bravo', 'Later hockey vs Bravo', 'LoL match vs Bravo']);
+  await user.selectOptions(sport, 'hockey');
+  expect(cardOrder()).toEqual(['Tomorrow hockey vs Bravo']);
+  await user.click(screen.getByText('Game dates (ET) · Today onward'));
+  fireEvent.change(screen.getByLabelText('From (ET)'), { target: { value: relativeDay(-1) } });
+  fireEvent.change(screen.getByLabelText('Through (ET)'), { target: { value: relativeDay(-1) } });
+  expect(cardOrder()).toEqual(['Yesterday hockey vs Bravo']);
+  await user.click(screen.getByRole('button', { name: 'All dates' }));
+  expect(cardOrder()).toEqual(['Tomorrow hockey vs Bravo', 'Yesterday hockey vs Bravo']);
+  await user.click(screen.getByRole('button', { name: 'Reset dates' }));
+  expect(cardOrder()).toEqual(['Tomorrow hockey vs Bravo']);
+  await user.selectOptions(sport, 'all');
   expect(within(card).getByLabelText('Notes')).toHaveValue('Keep this note');
 });
 

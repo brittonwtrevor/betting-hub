@@ -28,10 +28,10 @@ export function SendsProvider({ children }) {
     setDrafts(current => [draft, ...current.filter(item => item.id !== draft.id)]);
     return draft;
   }, []);
-  const add = useCallback(async marketIds => {
-    const data = await request('', 'POST', { game, marketIds });
+  const add = useCallback(async (marketIds, selectedGame) => {
+    const data = await request('', 'POST', { game: selectedGame, marketIds });
     replace(data.draft); setGame(null); setNotice('Markets saved to Sends.');
-  }, [game, replace]);
+  }, [replace]);
   const save = useCallback(async draft => {
     const data = await request(`/${encodeURIComponent(draft.id)}`, 'PATCH', draft);
     return replace(data.draft);

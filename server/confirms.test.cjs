@@ -31,7 +31,10 @@ function fixture(options = {}) {
       data.sources[id] ||= { id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at, revision: 1, status: 'pending', attempts: 0, retry_at_ms: 0, lease_until_ms: 0 };
     } else if (sql.startsWith('SELECT * FROM hub_confirm_sources WHERE id')) return [[data.sources[p[0]]].filter(Boolean).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_sources WHERE')) return [Object.values(data.sources).filter(row => row.status === 'pending' || row.status === 'error' && row.attempts < 3 && row.retry_at_ms <= p[0] || row.status === 'processing' && row.lease_until_ms <= p[1]).slice(0, 5).map(copy)];
-    else if (sql.startsWith('SELECT * FROM hub_confirm_sources ORDER')) return [Object.values(data.sources).map(copy)];
+    else if (sql.startsWith('SELECT * FROM hub_confirm_sources ORDER')) {
+      const rows = Object.values(data.sources);
+      return [(sql.endsWith('LIMIT 100') ? rows.slice(0, 100) : rows).map(copy)];
+    }
     else if (sql.startsWith('SELECT id, bet_id, partner_id')) {
       assert.match(sql, /WHERE deleted_at IS NULL/);
       const completeOnly = sql.includes('risk IS NOT NULL');
@@ -126,6 +129,18 @@ test('imports, parses, and persists multiple bets once across repeated reads and
   await f.makeService().tick();
   assert.equal(f.parseCalls, 1);
   assert.equal(Object.keys(f.data.bets).length, 2);
+});
+
+test('returns the full reply archive and classifies pending replies by their linked sport', async () => {
+  const f = fixture();
+  f.setMessages(Array.from({ length: 102 }, (_, index) => ({
+    ...original, messageId: original.messageId + index, updateId: original.updateId + index,
+  })));
+  const { sources } = await f.service.list();
+  assert.equal(sources.length, 102);
+  assert.deepEqual(sources[101].sports, ['lol']);
+  assert.equal(sources[101].status, 'pending');
+  assert.equal(f.trace.filter(sql => sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')).length, 2);
 });
 
 test('attribution edits persist in the same row while source identity remains server controlled', async () => {

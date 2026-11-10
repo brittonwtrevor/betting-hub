@@ -3,11 +3,14 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import App from '../../App';
 import ConfirmsInbox from './ConfirmsInbox';
 import { normalizeFields } from './confirmationFields';
+import { easternBetDay } from './BetFilters';
 
-const reply = { botId: '1', updateId: 42, messageId: 10, kind: 'message', chat: 'trevor_partner', from: 'TrevorBRedSox', chatId: '-5550868176', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], date: '2026-11-04T18:17:00.000Z' };
+const today = easternBetDay(new Date());
+const relativeDay = days => new Date(Date.parse(today) + days * 86400000).toISOString().slice(0, 10);
+const reply = { botId: '1', updateId: 42, messageId: 10, kind: 'message', chat: 'trevor_partner', from: 'TrevorBRedSox', chatId: '-5550868176', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], date: `${today}T18:17:00.000Z` };
 const id = 'a'.repeat(64);
 const base = { id: 'bet-1', sourceId: id, revision: 1, partnerId: 'trevor', partnerName: 'Trevor', bettorName: 'Trevor Britton',
-  betDate: '2026-11-04', betAt: reply.date, gameAt: '2026-11-05T00:00:00.000Z', telegramSenderId: '123', telegramSenderUsername: 'TrevorBRedSox',
+  betDate: today, betAt: reply.date, gameAt: '2026-11-05T00:00:00.000Z', telegramSenderId: '123', telegramSenderUsername: 'TrevorBRedSox',
   ...normalizeFields({ betId: 'HAN187', game: 'Hanwha Life Esports vs Bilibili Gaming', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110, grade: 'UNGRADED' }) };
 const response = (value, ok = true) => ({ ok, json: async () => value });
 let stored;
@@ -38,7 +41,7 @@ beforeEach(() => {
 test('shows partner and read-only bet details, hides bettor, and preserves metadata when saving', async () => {
   render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
   expect(screen.getByLabelText('Bet ID for bet-1')).toHaveTextContent('HAN187');
-  expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveTextContent('2026-11-04');
+  expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveTextContent(today);
   expect(screen.getByLabelText('Game for bet-1')).toHaveTextContent(base.game);
   for (const label of ['Bet ID', 'Bet date (ET)', 'Game']) expect(screen.getByLabelText(`${label} for bet-1`)).not.toHaveAttribute('contenteditable');
   expect(screen.queryByRole('textbox', { name: /Bet ID|Bet date|Game/ })).not.toBeInTheDocument();
@@ -104,27 +107,31 @@ test('loads editable wager fields, grading options and original source without c
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });
 
-test('sorts Confirms by Eastern bet date and sport while keeping reply context and unsaved edits', async () => {
+test('defaults to seven Eastern dates, filters individual bets by sport, and expands with the date slider', async () => {
   stored.sources[0].bets[0].sport = 'lol';
   const hockeyReply = (messageId, betDate, date) => ({
     ...stored.sources[0], id: `source-${messageId}`, message: { ...reply, messageId, date },
     bets: [{ ...base, id: `bet-${messageId}`, sport: 'hockey', betDate, betAt: date }],
   });
-  stored.sources.push(
-    hockeyReply(11, '', '2026-11-04T01:00:00Z'),
-    hockeyReply(12, '2026-11-05', '2026-11-02T18:00:00Z'),
-  );
+  const older = hockeyReply(11, '', `${relativeDay(-6)}T01:00:00Z`);
+  const recent = hockeyReply(12, relativeDay(-6), `${relativeDay(-8)}T18:00:00Z`);
+  stored.sources[0].bets.push({ ...base, id: 'mixed-hockey', sport: 'hockey' });
+  stored.sources.push(older, recent);
   render(<ConfirmsInbox />);
   await screen.findByLabelText('Bet ID for bet-1');
   const replyOrder = () => screen.getAllByRole('article').map(item => item.getAttribute('aria-label').split(' ')[1]);
-  const sort = screen.getByRole('combobox', { name: 'Sort by' });
-  expect(replyOrder()).toEqual(['12', '10', '11']);
-  fireEvent.change(screen.getByLabelText('Risk for bet-1'), { target: { value: '250' } });
-  fireEvent.change(sort, { target: { value: 'oldest' } });
-  expect(replyOrder()).toEqual(['11', '10', '12']);
-  fireEvent.change(sort, { target: { value: 'sport-newest' } });
-  expect(replyOrder()).toEqual(['12', '11', '10']);
-  expect(within(screen.getByRole('article', { name: 'Reply 10 from trevor_partner' })).getByLabelText('Risk for bet-1')).toHaveValue('250');
+  expect(replyOrder()).toEqual(['10', '12']);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Sport' }), { target: { value: 'hockey' } });
+  expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('article', { name: 'Reply 10 from trevor_partner' })).getByLabelText('Risk for mixed-hockey')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Bet dates (ET) · Last 7 days'));
+  const slider = screen.getByRole('slider', { name: 'Adjust start date' });
+  fireEvent.change(slider, { target: { value: slider.min } });
+  expect(replyOrder()).toEqual(['10', '12', '11']);
+  fireEvent.click(screen.getByRole('button', { name: 'Reset dates' }));
+  expect(replyOrder()).toEqual(['10', '12']);
+  fireEvent.click(screen.getByRole('button', { name: 'All dates' }));
+  expect(replyOrder()).toEqual(['10', '12', '11']);
 });
 
 test('edits wager fields, saves a WIN and persists net P/L', async () => {

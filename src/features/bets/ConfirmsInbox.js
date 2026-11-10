@@ -1,37 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Badge, EmptyState, Panel, SearchField } from '../../components/ui';
 import { parseDate } from '../sports/lol/upcoming';
-import { BetOrder, sortByBetOrder, sportLabel } from './BetOrder';
+import BetFilters, { defaultBetDates, easternBetDay, matchesBetDates, newestDateFirst, sportLabel } from './BetFilters';
 import { calculatePL, grades } from './confirmationFields';
 
 const eastern = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 const money = value => value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' }).format(value);
 const receiptStatuses = { pending: 'Queued', sending: 'Sending', sent: 'Sent', error: 'Delivery failed', uncertain: 'Delivery unconfirmed', cancelled: 'Cancelled' };
-const easternDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
-
 function betDateKey(bet, message) {
   const time = parseDate(bet?.betAt) || parseDate(message.date) || parseDate(message.receivedAt);
-  let day = bet?.betDate;
-  if (!day && time) {
-    const { year, month, day: date } = Object.fromEntries(easternDay.formatToParts(time).map(part => [part.type, part.value]));
-    day = `${year}-${month}-${date}`;
-  }
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(bet?.betDate) ? bet.betDate : easternBetDay(time);
   return day ? `${day} ${time?.toISOString() || ''}` : '';
 }
 
-function sortReplies(sources, order) {
-  const ordered = sources.map(source => {
-    const betKeys = bet => ({ date: betDateKey(bet, source.message), sport: sportLabel(bet.sport) });
-    const dates = source.bets.map(bet => betDateKey(bet, source.message)).filter(Boolean).sort();
-    const sports = [...new Set(source.bets.map(bet => sportLabel(bet.sport)).filter(Boolean))];
-    return {
-      ...source,
-      bets: sortByBetOrder(source.bets, order, betKeys),
-      orderDate: dates[order.endsWith('oldest') ? 0 : dates.length - 1] || betDateKey(null, source.message),
-      orderSport: sports.length > 1 ? 'Multiple sports' : sports[0] || '',
-    };
+function filterReplies(sources, sport, dates) {
+  const days = new Set();
+  const filtered = sources.flatMap(source => {
+    if (!source.bets.length) {
+      const date = betDateKey(null, source.message);
+      days.add(date.slice(0, 10));
+      return (sport === 'all' || source.sports?.includes(sport)) && matchesBetDates(date.slice(0, 10), dates)
+        ? [{ ...source, orderDate: date }] : [];
+    }
+    const matching = source.bets.map(bet => ({ bet, date: betDateKey(bet, source.message) }))
+      .filter(({ bet, date }) => {
+        const day = date.slice(0, 10);
+        days.add(day);
+        return (sport === 'all' || bet.sport === sport) && matchesBetDates(day, dates);
+      }).sort((a, b) => newestDateFirst(a.date, b.date));
+    return matching.length ? [{ ...source, bets: matching.map(({ bet }) => bet), orderDate: matching[0].date }] : [];
   });
-  return sortByBetOrder(ordered, order, source => ({ date: source.orderDate, sport: source.orderSport }));
+  return { days: [...days], sources: filtered.sort((a, b) => newestDateFirst(a.orderDate, b.orderDate)) };
 }
 
 async function api(path = '', method = 'GET', body, signal) {
@@ -85,9 +84,9 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
   </>;
 }
 const statusLabels = { pending: 'Waiting for AI', processing: 'Parsing…', parsed: 'AI parsed', review: 'Needs review', error: 'Parsing failed', manual: 'Manual entry' };
-export default function ConfirmsInbox({ order, onOrderChange }) {
+export default function ConfirmsInbox({ filters, onFiltersChange }) {
   const [query, setQuery] = useState('');
-  const [localOrder, setLocalOrder] = useState('newest');
+  const [localFilters, setLocalFilters] = useState({ sport: 'all', dates: null });
   const [inbox, setInbox] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -107,16 +106,19 @@ export default function ConfirmsInbox({ order, onOrderChange }) {
         const result = await api('', 'GET', undefined, controller.signal);
         if (!Array.isArray(result.sources)) throw new Error('Confirms returned an unreadable response.');
         if (active) {
-          setInbox(current => ({ ...result, sources: result.sources.map(source => {
-            const previous = current?.sources.find(item => item.id === source.id);
-            if (previous?.revision > source.revision) return previous;
-            return { ...source, deletedBetCount: Math.max(source.deletedBetCount || 0, previous?.deletedBetCount || 0),
-              deletionNotifications: Object.values([...(previous?.deletionNotifications || []), ...(source.deletionNotifications || [])].reduce((all, receipt) => ({ ...all, [receipt.id]: receipt }), {})),
-              bets: source.bets.filter(bet => !deletedRows.current.has(bet.id)).map(bet => {
-              const old = previous?.bets.find(item => item.id === bet.id);
-              return old?.revision > bet.revision ? old : bet;
+          setInbox(current => {
+            const previousSources = new Map(current?.sources.map(source => [source.id, source]));
+            return { ...result, sources: result.sources.map(source => {
+              const previous = previousSources.get(source.id);
+              if (previous?.revision > source.revision) return previous;
+              return { ...source, deletedBetCount: Math.max(source.deletedBetCount || 0, previous?.deletedBetCount || 0),
+                deletionNotifications: Object.values([...(previous?.deletionNotifications || []), ...(source.deletionNotifications || [])].reduce((all, receipt) => ({ ...all, [receipt.id]: receipt }), {})),
+                bets: source.bets.filter(bet => !deletedRows.current.has(bet.id)).map(bet => {
+                  const old = previous?.bets.find(item => item.id === bet.id);
+                  return old?.revision > bet.revision ? old : bet;
+                }) };
             }) };
-          }) }));
+          });
           setError('');
         }
       } catch (failure) { if (active) setError(failure.name === 'AbortError' ? 'Loading Confirms timed out. Try refreshing.' : failure.message); }
@@ -152,15 +154,19 @@ export default function ConfirmsInbox({ order, onOrderChange }) {
   const pollFresh = receiver?.lastPolledAt && Date.now() - Date.parse(receiver.lastPolledAt) < 45000;
   const status = error || receiver?.error ? 'Receiving error' : receiver?.enabled === false ? 'Receiving paused' : pollFresh ? 'Receiving every 10s' : receiver?.lastPolledAt ? 'Receiving delayed' : 'Waiting for receiver';
   const search = query.trim().toLowerCase();
-  const sortOrder = order ?? localOrder;
-  const matches = (inbox?.sources || []).filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
+  const selection = filters ?? localFilters;
+  const setFilters = onFiltersChange || setLocalFilters;
+  const defaults = defaultBetDates(true);
+  const { days, sources: datedSources } = filterReplies(inbox?.sources || [], selection.sport, selection.dates ?? defaults);
+  const sources = datedSources.filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
     ...source.bets.flatMap(bet => [bet.betId, bet.game, bet.team, bet.bet, bet.grade, bet.partnerName, bet.bettorName, bet.betDate, bet.telegramSenderUsername]), ...(source.message.betIds || [])].join(' ').toLowerCase().includes(search));
-  const sources = sortReplies(matches, sortOrder);
   return <Panel title="Partner confirms" description="Review extracted bets, adjust wager details, and save a grade to record P/L."
     action={<button type="button" className="button button-secondary" disabled={refreshing} onClick={() => refresh.current()}>{refreshing ? 'Refreshing…' : 'Refresh replies'}</button>}>
     <div className="confirms-controls"><div className="confirms-receiver"><Badge tone={pollFresh && !error && !receiver?.error && receiver?.enabled !== false ? 'success' : 'neutral'}>{status}</Badge><span>Last Telegram check: {eastern(receiver?.lastPolledAt)} ET</span></div>
       <div className="confirms-filters"><SearchField label="Search saved replies" value={query} onChange={setQuery} placeholder="Bet ID, partner, game, or message…" />
-        <BetOrder value={sortOrder} onChange={onOrderChange || setLocalOrder} dateLabel="Bet date" />
+        <BetFilters sport={selection.sport} onSportChange={sport => setFilters({ ...selection, sport })}
+          dates={selection.dates} onDatesChange={dates => setFilters({ ...selection, dates })}
+          defaults={defaults} defaultLabel="Last 7 days" dateLabel="Bet dates" days={days} />
       </div>
     </div>
     {error && <p className="sends-error" role="alert">{error}{inbox ? ' Previously loaded replies remain below.' : ''}</p>}{receiver?.error && <p className="sends-error" role="alert">{receiver.error}</p>}
@@ -175,7 +181,7 @@ export default function ConfirmsInbox({ order, onOrderChange }) {
       {(source.deletionNotifications || []).map(receipt => <p key={receipt.id} className="confirms-note">Telegram deletion for {receipt.betId}: {receiptStatuses[receipt.status] || receipt.status}{receipt.error ? ` · ${receipt.error}` : ''}</p>)}
       {source.bets.length > 0 && <div className="table-scroll"><table className="data-table confirmation-fields" aria-label={`Bets for reply ${source.message.messageId}`}><colgroup>{[6, 9, 8, 14, 10, 10, 6, 6, 10, 7, 6, 8].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup><thead><tr>{['BETID', 'PARTNER', 'BET DATE (ET)', 'GAME', 'TEAM', 'BET', 'RISK ($)', 'ODDS', 'GRADE', 'PARTRETURN P/L ($)', 'P/L', 'Actions'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{source.bets.map(bet => <ConfirmationRow key={bet.id} bet={bet} onSave={saveBet} onDelete={deleteBet} />)}</tbody></table></div>}
     </article>)}
-    {!loading && !sources.length && !error && <EmptyState compact title={search ? 'No matching replies' : 'No bet replies received yet'} description={search ? 'Try another bet ID, partner, or message.' : 'Partner messages containing a recognized six-character Bet ID will appear here.'} />}
+    {!loading && !sources.length && !error && <EmptyState compact title={search || inbox?.sources.length ? 'No matching replies' : 'No bet replies received yet'} description={search || inbox?.sources.length ? 'Change the search, sport, or date range to see more replies.' : 'Partner messages containing a recognized six-character Bet ID will appear here.'} />}
     <p className="confirms-note">Refreshes every 10 seconds. WIN records profit excluding stake; LOSS subtracts risk; VOID is $0. PARTRETURN uses your signed net P/L (+50 profit, -25 loss). Changes apply when you save. Raw replies and edit history are preserved.</p>
   </Panel>;
 }

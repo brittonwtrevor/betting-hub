@@ -45,10 +45,13 @@ function gameDescription(game, { includeGoalies = false } = {}) {
   if (!includeGoalies) return league;
   return `${league} · Home goalie: ${game.goalie_team || 'Unknown'} · Away goalie: ${game.goalie_opp || 'Unknown'}`;
 }
+function seriesMoneyline(game) {
+  return { BO1: game.xgb_map1, BO3: game.bo3_price, BO5: game.bo5_price }[game.series_format];
+}
 function marketGroups(game) {
   if (game.sport === 'hockey') return hockeyMarketGroups(game);
   const bestOf = { BO1: 1, BO3: 3, BO5: 5 }[game.series_format];
-  const seriesFair = { BO1: game.xgb_map1, BO3: game.bo3_price, BO5: game.bo5_price }[game.series_format];
+  const seriesFair = seriesMoneyline(game);
   const groups = ['a', 'b'].map(side => {
     const team = game[`team_${side}`];
     const price = value => Number.isFinite(value) ? side === 'a' ? value : oppositeOdds(value) : null;
@@ -68,4 +71,4 @@ function marketGroups(game) {
 }
 function allMarkets(game) { return marketGroups(game).flatMap(group => group.markets); }
 function formatOdds(value) { return Number.isFinite(value) ? value > 0 ? `+${value}` : String(value) : '—'; }
-module.exports = { marketGroups, allMarkets, formatOdds, oppositeOdds, gameDescription };
+module.exports = { marketGroups, allMarkets, formatOdds, oppositeOdds, gameDescription, seriesMoneyline };
