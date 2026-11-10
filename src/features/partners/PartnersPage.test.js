@@ -17,15 +17,25 @@ const payments = [
 ];
 let persisted;
 let reportedBets;
+let recordedPayments;
 const response = (body, ok = true) => ({ ok, json: async () => body });
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => 'new-partner' } });
   persisted = [];
   reportedBets = [];
+  recordedPayments = [];
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/confirms/bets') return response({ bets: reportedBets });
     const input = options.body && JSON.parse(options.body);
+    if (url === '/api/partners/ledger/payments') {
+      if (options.method !== 'POST') return response({ payments: recordedPayments });
+      const saved = recordedPayments.find(payment => payment.id === input.id);
+      if (saved) return response({ payment: saved });
+      const payment = { ...input, amount: Number(input.amount), date: '2026-11-04T21:00:00.000Z', status: 'Complete' };
+      recordedPayments = [payment, ...recordedPayments];
+      return response({ payment });
+    }
     if (url.endsWith('/import')) {
       for (const partner of input.partners) if (!persisted.some(item => item.id === partner.id)) persisted.push({ ...partner, revision: 1 });
       return response({ imported: true });
@@ -203,6 +213,55 @@ test('shows Telegram fills under the correct partner and reloads saved grades an
   expect(within(table).getByText('WIN')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Balances', exact: true }));
   const balances = screen.getByRole('table', { name: 'Partner balances' });
-  expect(within(balances).getByText('$300.00')).toBeInTheDocument();
-  expect(within(balances).getAllByText('—')).toHaveLength(4);
+  expect(within(balances).getAllByText('$300.00')).toHaveLength(2);
+  expect(within(balances).getAllByText('—')).toHaveLength(1);
+});
+
+test('payments clear each partner’s settled balance in either direction and survive a remount', async () => {
+  const user = userEvent.setup();
+  let sequence = 0;
+  window.crypto.randomUUID = () => `payment-${++sequence}`;
+  persisted = [{ id: 'a', name: 'Partner A', legacyIds: ['old-a'] }, { id: 'b', name: 'Partner B' }];
+  reportedBets = [
+    { id: '1', betId: 'BOS145', partnerId: 'old-a', stake: 100, status: 'LOSS', settledProfit: -100 },
+    { id: '2', betId: 'TOR145', partnerId: 'b', stake: 100, status: 'WIN', settledProfit: 100 },
+    { id: '3', betId: 'BOS146', partnerId: 'a', stake: 400, status: 'UNGRADED', settledProfit: null },
+  ];
+  const { unmount } = render(<PartnersPage />);
+  const stat = label => screen.getByText(label, { selector: '.stat-label' }).closest('.stat-card').querySelector('.stat-value');
+  const choose = name => user.click(within(screen.getByRole('group', { name: 'Partners' })).getByRole('button', { name, exact: true }));
+  const add = async (direction, amount, reference, partnerId) => {
+    const button = await screen.findByRole('button', { name: 'Add payment' });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    if (partnerId) await user.selectOptions(screen.getByLabelText('Partner', { exact: true }), partnerId);
+    await user.selectOptions(screen.getByLabelText('Direction'), direction);
+    await user.type(screen.getByLabelText('Amount (USD)'), amount);
+    await user.type(screen.getByLabelText('Reference (optional)'), reference);
+    await user.click(screen.getByRole('button', { name: 'Save payment' }));
+    expect(await screen.findByText(reference)).toBeInTheDocument();
+  };
+  await ready();
+  await waitFor(() => expect(stat('Owed to partner')).toHaveTextContent('$100.00'));
+  expect(stat('Owed to you')).toHaveTextContent('$100.00');
+  await choose('Partner A');
+  expect(stat('Owed to you')).toHaveTextContent('$0.00');
+  await add('Sent', '60.25', 'First transfer');
+  expect(stat('Owed to partner')).toHaveTextContent('$39.75');
+  await add('Sent', '39.75', 'Final transfer');
+  expect(stat('Owed to partner')).toHaveTextContent('$0.00');
+  expect(stat('Open exposure')).toHaveTextContent('$400.00');
+  await choose('All Partners');
+  expect(stat('Owed to you')).toHaveTextContent('$100.00');
+  await add('Received', '100', 'Partner B transfer', 'b');
+  expect(stat('Owed to you')).toHaveTextContent('$0.00');
+  unmount();
+
+  render(<PartnersPage />);
+  await ready();
+  await choose('Partner B');
+  await user.click(screen.getByRole('button', { name: 'Payments', exact: true }));
+  expect(await screen.findByText('Partner B transfer')).toBeInTheDocument();
+  expect(screen.queryByText('Final transfer')).not.toBeInTheDocument();
+  expect(stat('Owed to you')).toHaveTextContent('$0.00');
 });

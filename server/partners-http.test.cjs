@@ -42,3 +42,18 @@ test('partner failures never expose database connection details or claim success
   assert.equal(result.status, 502);
   assert.doesNotMatch(result.body, /private-host|secret/);
 });
+
+test('partner payment ledger uses the protected partner routes', async () => {
+  const payment = { id: 'receipt', partnerId: 'local-1', direction: 'Sent', amount: '100.00' };
+  const request = fixture({
+    async listPayments() { return [payment]; },
+    async addPayment(input) { return input; },
+  });
+  const url = '/api/partners/ledger/payments';
+  assert.equal((await request(url, { headers: { authorization: '' } })).status, 401);
+  assert.equal((await request(url, { method: 'POST', headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
+  const created = await request(url, { method: 'POST', body: payment });
+  assert.equal(created.status, 201);
+  assert.deepEqual(JSON.parse(created.body), { payment });
+  assert.deepEqual(JSON.parse((await request(url)).body), { payments: [payment] });
+});

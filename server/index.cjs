@@ -109,16 +109,17 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       }
     }
 
-    const partnerRoute = /^\/api\/partners(?:\/(import|[a-zA-Z0-9_-]{1,100}))?$/.exec(pathname);
+    const partnerRoute = /^\/api\/partners(?:\/(ledger\/payments|[a-zA-Z0-9_-]{1,100}))?$/.exec(pathname);
     if (partnerRoute) {
       const id = partnerRoute[1];
-      const allowed = id === 'import' ? ['POST'] : id ? ['PATCH'] : ['GET', 'HEAD', 'POST'];
+      const payments = id === 'ledger/payments';
+      const allowed = id === 'import' ? ['POST'] : id && !payments ? ['PATCH'] : ['GET', 'HEAD', 'POST'];
       if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
       try {
         let body;
         if (!['GET', 'HEAD'].includes(request.method)) {
-          if (request.headers['x-betting-hub'] !== 'partners' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Partner Accounting in Betting Hub to save partners.' });
+          if (request.headers['x-betting-hub'] !== 'partners' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: `Open Partner Accounting in Betting Hub to save ${payments ? 'payments' : 'partners'}.` });
           if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Partner requests require JSON.' });
           let size = 0; const chunks = [];
           for await (const chunk of request) {
@@ -130,13 +131,17 @@ function createHandler({ username, password, directory, requireHttps = true, upc
           catch { return json(400, { message: 'Invalid partner JSON.' }); }
         }
         if (!partnersService) return json(503, { message: 'Partner storage is not configured yet.' });
+        if (payments) {
+          if (request.method === 'POST') return json(201, { payment: await partnersService.addPayment(body) });
+          return json(200, { payments: await partnersService.listPayments() });
+        }
         if (id === 'import') return json(200, await partnersService.importLegacy(body));
         if (request.method === 'PATCH') return json(200, { partner: await partnersService.update(id, body) });
         if (request.method === 'POST') return json(200, { partner: await partnersService.add(body) });
         return json(200, { partners: await partnersService.list() });
       } catch (error) {
         if (error.partnerSafe) return json(error.status || 400, { message: error.message });
-        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save partners. Please try again.' });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: `Unable to load or save ${payments ? 'partner payments' : 'partners'}. Please try again.` });
       }
     }
     if (pathname === '/api/project-tasks') {

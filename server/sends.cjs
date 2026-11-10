@@ -67,7 +67,7 @@ function teamPrefix(draft) {
   const side = draft.markets.find(market => /^[ab]:/.test(market.id))?.id[0] || 'a';
   return draft.game[`team_${side}`].normalize('NFKD').replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
 }
-function telegramText(draft) {
+function telegramText(draft, { includeGoalies = false } = {}) {
   for (const market of draft.markets) {
     if (!market.playTo) throw invalid(`Enter a play-to price for ${market.label} before sending.`);
     if (market.needsLine && !market.line) throw invalid(`Enter a total for ${market.label} before sending.`);
@@ -78,12 +78,12 @@ function telegramText(draft) {
   const message = [
     `Bet ID: ${draft.betId}`,
     `${draft.game.team_a} vs ${draft.game.team_b}`,
-    `${gameDescription(draft.game)} · ${when}`,
+    `${gameDescription(draft.game, { includeGoalies })} · ${when}`,
     '',
     ...draft.markets.map(market => `• ${market.label}${market.needsLine ? ` ${market.line}` : ''} · Play to ${Number(market.playTo) > 0 ? '+' : ''}${Number(market.playTo)}`),
     ...(draft.notes ? ['', `Notes: ${draft.notes}`] : []),
   ].join('\n');
-  if (message.length > 4096) throw invalid('This card exceeds Telegram’s 4,096-character limit. Shorten the notes or remove some markets.');
+  if (!includeGoalies && message.length > 4096) throw invalid('This card exceeds Telegram’s 4,096-character limit. Shorten the notes or remove some markets.');
   return message;
 }
 function requireIdle(draft) {
@@ -212,7 +212,9 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
           destinations.set(channel.toLowerCase(), { name: partner.name, channel });
         }
         const message = telegramText(next);
-        const fingerprint = createHash('sha256').update(message).digest('hex');
+        // Keep the original hockey delivery key so this formatting change cannot resend an existing delivery.
+        const fingerprintText = next.game.sport === 'hockey' ? telegramText(next, { includeGoalies: true }) : message;
+        const fingerprint = createHash('sha256').update(fingerprintText).digest('hex');
         const deliveries = [...(next.deliveries || [])];
         const pending = [];
         for (const { name, channel } of destinations.values()) {

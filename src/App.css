@@ -1,11 +1,11 @@
 .app-shell { min-height: 100vh; }
-.sidebar { width: 72px; background: var(--navy); color: #a3afc1; position: fixed; inset: 0 auto 0 0; display: flex; flex-direction: column; padding: 24px 12px 0; z-index: 20; overflow-y: auto; }
+.sidebar { width: 72px; background: #626262; position: fixed; inset: 0 auto 0 0; display: flex; flex-direction: column; padding: 24px 12px 0; z-index: 20; overflow-y: auto; }
 .nav-eyebrow { font-size: 10px; letter-spacing: 1.8px; font-weight: 650; color: #718097; margin: 0 14px 13px; }
 .nav-link { min-height: 46px; display: flex; align-items: center; gap: 12px; margin: 4px 0; padding: 10px 14px; border-radius: 7px; font-size: 12px; font-weight: 550; transition: background .15s, color .15s; }
 .nav-link svg { color: #8a9ab0; }
-.nav-link:hover { background: #1a2940; color: white; }
-.nav-link.active { color: #f0f9f6; background: #253c42; }
-.nav-link.active svg { color: #a9e9ce; }
+.sidebar .nav-link svg { color: #6dff62; }
+.sidebar .nav-link:hover { background: #535353; }
+.sidebar .nav-link.active { background: #454545; }
 .nav-active-dot { height: 5px; width: 5px; border-radius: 50%; background: #a9e9ce; margin-left: auto; }
 .sidebar .nav-link { justify-content: center; gap: 0; padding: 12px; }
 .workspace { margin-left: 72px; min-width: 0; }
@@ -176,6 +176,14 @@ h1 { font-size: 29px; line-height: 1.2; font-weight: 650; letter-spacing: -.9px;
 .partner-form input { min-width: 0; max-width: 320px; flex: 1; border: 1px solid #e0e6ef; border-radius: 5px; padding: 8px 11px; font-size: 12px; }
 .partner-form p { font-size: 10px; color: #8290a5; line-height: 1.6; }
 .partner-form [role="alert"] { color: #b13d3d; }
+.partner-payment-form { margin: 0 22px 18px; }
+.partner-payment-form fieldset { min-width: 0; padding: 0; border: 0; }
+.partner-payment-form legend { font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+.partner-payment-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 12px; }
+.partner-payment-fields label { display: flex; flex-direction: column; gap: 6px; }
+.partner-payment-fields input, .partner-payment-fields select { width: 100%; max-width: none; }
+.partner-payment-fields select { border: 1px solid #e0e6ef; border-radius: 5px; padding: 8px 11px; font: inherit; background: var(--paper); }
+.partner-payment-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .partner-link { border: 0; padding: 0; background: transparent; color: var(--accent); font-size: inherit; text-align: left; }
 .partner-link:hover { text-decoration: underline; }
 

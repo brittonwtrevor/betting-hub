@@ -104,6 +104,29 @@ test('loads editable wager fields, grading options and original source without c
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });
 
+test('sorts Confirms by Eastern bet date and sport while keeping reply context and unsaved edits', async () => {
+  stored.sources[0].bets[0].sport = 'lol';
+  const hockeyReply = (messageId, betDate, date) => ({
+    ...stored.sources[0], id: `source-${messageId}`, message: { ...reply, messageId, date },
+    bets: [{ ...base, id: `bet-${messageId}`, sport: 'hockey', betDate, betAt: date }],
+  });
+  stored.sources.push(
+    hockeyReply(11, '', '2026-11-04T01:00:00Z'),
+    hockeyReply(12, '2026-11-05', '2026-11-02T18:00:00Z'),
+  );
+  render(<ConfirmsInbox />);
+  await screen.findByLabelText('Bet ID for bet-1');
+  const replyOrder = () => screen.getAllByRole('article').map(item => item.getAttribute('aria-label').split(' ')[1]);
+  const sort = screen.getByRole('combobox', { name: 'Sort by' });
+  expect(replyOrder()).toEqual(['12', '10', '11']);
+  fireEvent.change(screen.getByLabelText('Risk for bet-1'), { target: { value: '250' } });
+  fireEvent.change(sort, { target: { value: 'oldest' } });
+  expect(replyOrder()).toEqual(['11', '10', '12']);
+  fireEvent.change(sort, { target: { value: 'sport-newest' } });
+  expect(replyOrder()).toEqual(['12', '11', '10']);
+  expect(within(screen.getByRole('article', { name: 'Reply 10 from trevor_partner' })).getByLabelText('Risk for bet-1')).toHaveValue('250');
+});
+
 test('edits wager fields, saves a WIN and persists net P/L', async () => {
   render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
   for (const [label, value] of [['Team', 'Other team'], ['Bet', 'Spread -1.5'], ['Risk', '500'], ['Odds', '+150']]) fireEvent.change(screen.getByLabelText(`${label} for bet-1`), { target: { value } });

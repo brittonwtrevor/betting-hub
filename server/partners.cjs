@@ -13,9 +13,24 @@ function normalize(input, requireId = false) {
 }
 const record = row => ({ id: row.id, name: row.name, telegramChannel: row.telegram_channel,
   revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at });
+const paymentRecord = row => ({ id: row.id, partnerId: row.partner_id, direction: row.direction,
+  amount: row.amount_cents / 100, reference: row.reference, date: row.recorded_at, status: 'Complete' });
+
+function normalizePayment(input) {
+  const { id, partnerId, direction, amount, reference = '' } = input || {};
+  if (typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) throw invalid('Invalid payment ID.');
+  if (typeof partnerId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(partnerId)) throw invalid('Choose a saved partner.');
+  if (!['Sent', 'Received'].includes(direction)) throw invalid('Choose who paid whom.');
+  const dollars = typeof amount === 'string' ? Number(amount) : 0;
+  if (typeof amount !== 'string' || !/^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(amount) || dollars < 0.01 || dollars > 10000000) {
+    throw invalid('Enter an amount from $0.01 to $10,000,000 with at most two decimal places.');
+  }
+  if (typeof reference !== 'string' || reference.length > 200) throw invalid('Enter a reference of up to 200 characters.');
+  return { id, partner_id: partnerId, direction, amount_cents: Math.round(dollars * 100), reference: reference.trim() };
+}
 
 function createPartnersService({ env = process.env, createPool, now = () => new Date(), makeId = randomUUID } = {}) {
-  let pool, schema;
+  let pool, schema, paymentsSchema;
   async function database() {
     if (!pool) pool = (createPool || require('mysql2/promise').createPool)(mysqlOptions(env));
     if (!schema) schema = (async () => {
@@ -32,6 +47,20 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
     })().catch(error => { schema = null; throw error; });
     await schema;
     return pool;
+  }
+  async function paymentsDatabase() {
+    const db = await database();
+    if (!paymentsSchema) paymentsSchema = db.query(`CREATE TABLE IF NOT EXISTS hub_partner_payments (
+      id CHAR(36) NOT NULL PRIMARY KEY, partner_id VARCHAR(100) NOT NULL,
+      direction ENUM('Sent', 'Received') NOT NULL, amount_cents INT UNSIGNED NOT NULL,
+      reference VARCHAR(200) NOT NULL, recorded_at VARCHAR(24) NOT NULL,
+      INDEX partner_payment_dates (partner_id, recorded_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).catch(error => {
+      paymentsSchema = null;
+      throw error;
+    });
+    await paymentsSchema;
+    return db;
   }
   async function transaction(work) {
     const connection = await (await database()).getConnection();
@@ -50,6 +79,29 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
     return { id, name: partner.name, telegramChannel: partner.telegramChannel, revision: 1, createdAt: at, updatedAt: at };
   }
   return {
+    async listPayments() {
+      const db = await paymentsDatabase();
+      const [rows] = await db.query('SELECT * FROM hub_partner_payments ORDER BY recorded_at DESC, id DESC');
+      return rows.map(paymentRecord);
+    },
+    async addPayment(input) {
+      const payment = normalizePayment(input);
+      const db = await paymentsDatabase();
+      const recordedAt = now().toISOString();
+      try {
+        const [result] = await db.execute(`INSERT INTO hub_partner_payments (id, partner_id, direction, amount_cents, reference, recorded_at)
+          SELECT ?, id, ?, ?, ?, ? FROM hub_partners WHERE CAST(id AS BINARY) = CAST(? AS BINARY)`,
+        [payment.id, payment.direction, payment.amount_cents, payment.reference, recordedAt, payment.partner_id]);
+        if (!result.affectedRows) throw invalid('This partner was not found. Refresh partners.', 404);
+        return paymentRecord({ ...payment, recorded_at: recordedAt });
+      } catch (error) {
+        if (error.code !== 'ER_DUP_ENTRY') throw error;
+        // A retry after a lost response returns the original receipt.
+        const [[saved]] = await db.execute('SELECT * FROM hub_partner_payments WHERE id = ?', [payment.id]);
+        if (saved && Object.keys(payment).every(key => payment[key] === saved[key])) return paymentRecord(saved);
+        throw invalid('This payment was already saved with different details. Refresh partners to review it.', 409);
+      }
+    },
     async list() {
       const db = await database();
       const [rows] = await db.query('SELECT * FROM hub_partners ORDER BY name, id');

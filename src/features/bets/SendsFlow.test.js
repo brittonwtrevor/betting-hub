@@ -21,7 +21,10 @@ beforeEach(() => {
   saved = []; failSave = false;
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/partners/import') return response({ imported: true });
-    if (url === '/api/partners') return response({ partners: [{ id: 'sam', name: 'Sam', telegramChannel: '-100123', revision: 1 }] });
+    if (url === '/api/partners') return response({ partners: [
+      { id: 'sam', name: 'Sam', telegramChannel: '-100123', revision: 1 },
+      { id: 'alex', name: 'Alex', telegramChannel: '-100456', revision: 1 },
+    ] });
     if (url === '/api/hockey/future-games') return response({ games: [hockey], columns: [{ key: 'homeTeamName', label: 'Home', type: 'text' }, { key: 'visitingTeamName', label: 'Away', type: 'text' }], source: { updatedAt: '2026-11-04 12:00:00' } });
     if (url === '/api/lol/upcoming-games') return response({ games: [game], columns, source: { updatedAt: '2026-11-04 12:00:00' } });
     const body = options.body && JSON.parse(options.body);
@@ -46,6 +49,32 @@ beforeEach(() => {
   });
 });
 afterEach(() => { delete global.fetch; window.localStorage.clear(); });
+
+test('sorts Sends by game start or sport while keeping unsaved card edits', async () => {
+  window.history.replaceState(null, '', '/#/bets');
+  const draft = (id, sport, begin_at) => ({
+    id, game: { ...game, sport, begin_at, team_a: id }, revision: 1, markets: [], recipients: [], notes: '',
+  });
+  saved = [
+    draft('LoL match', 'lol', '2026-11-05 19:00:00'),
+    draft('Earlier hockey', 'hockey', '2026-11-05T19:30:00+01:00'),
+    draft('Later hockey', 'hockey', '2026-11-06T00:00:00Z'),
+  ];
+  const user = userEvent.setup();
+  render(<App />);
+  const card = await screen.findByRole('article', { name: 'LoL match vs Bravo' });
+  const cardOrder = () => screen.getAllByRole('article').map(item => item.getAttribute('aria-label'));
+  const sort = screen.getByRole('combobox', { name: 'Sort by' });
+  expect(cardOrder()).toEqual(['Later hockey vs Bravo', 'LoL match vs Bravo', 'Earlier hockey vs Bravo']);
+  await user.type(within(card).getByLabelText('Notes'), 'Keep this note');
+  await user.selectOptions(sort, 'oldest');
+  expect(cardOrder()).toEqual(['Earlier hockey vs Bravo', 'LoL match vs Bravo', 'Later hockey vs Bravo']);
+  await user.selectOptions(sort, 'sport-newest');
+  expect(cardOrder()).toEqual(['Later hockey vs Bravo', 'Earlier hockey vs Bravo', 'LoL match vs Bravo']);
+  await user.selectOptions(sort, 'sport-oldest');
+  expect(cardOrder()).toEqual(['Earlier hockey vs Bravo', 'Later hockey vs Bravo', 'LoL match vs Bravo']);
+  expect(within(card).getByLabelText('Notes')).toHaveValue('Keep this note');
+});
 
 test('selects markets, edits independent play-to prices and total lines, and persists across page changes', async () => {
   const user = userEvent.setup();
@@ -117,16 +146,22 @@ test('send button saves current fields, reports delivery and keeps failed edits 
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
   const card = await screen.findByRole('article', { name: 'Alpha vs Bravo' });
   const send = within(card).getByRole('button', { name: 'Send to Telegram' });
+  const sam = within(card).getByRole('checkbox', { name: /Sam/ });
+  const alex = within(card).getByRole('checkbox', { name: /Alex/ });
+  expect(sam.closest('label')).toHaveAttribute('data-delivery', 'unsent');
+  expect(sam).not.toBeChecked();
   expect(send).toBeDisabled();
   const rows = within(card).getAllByRole('row');
   expect(rows[rows.length - 1]).toHaveTextContent('Notes');
   await user.type(within(card).getByLabelText('Play-to price for Alpha ML'), '+150');
   await user.type(within(card).getByLabelText('Notes'), 'Line might move');
-  await user.click(within(card).getByRole('checkbox', { name: /Sam/ }));
+  await user.click(within(card).getByText('Sam', { exact: false, selector: 'label span' }));
+  expect(sam).toBeChecked();
   expect(send).toBeEnabled();
   failSave = true;
   await user.click(send);
   expect(await within(card).findByRole('alert')).toHaveTextContent('Unable to confirm delivery');
+  expect(sam.closest('label')).toHaveAttribute('data-delivery', 'unsent');
   expect(within(card).getByLabelText('Notes')).toHaveValue('Line might move');
   expect(within(card).getByRole('button', { name: 'Save changes' })).toBeEnabled();
   failSave = false;
@@ -139,6 +174,11 @@ test('send button saves current fields, reports delivery and keeps failed edits 
   expect(requests).toHaveLength(2);
   expect(requests[1][1].headers['X-Betting-Hub']).toBe('sends');
   expect(within(card).getByRole('button', { name: 'Save changes' })).toBeDisabled();
+  expect(sam.closest('label')).toHaveAttribute('data-delivery', 'sent');
+  expect(alex.closest('label')).toHaveAttribute('data-delivery', 'unsent');
+  await user.click(sam);
+  expect(sam).not.toBeChecked();
+  expect(sam.closest('label')).toHaveAttribute('data-delivery', 'sent');
 });
 
 
@@ -151,6 +191,7 @@ test('clicking a hockey row offers hockey markets and saves playable Sends with 
   // A click on any ordinary table cell opens the same picker as the team button.
   await user.click(await screen.findByText('Toronto'));
   const picker = screen.getByRole('dialog', { name: 'Markets · Boston Bruins vs Toronto' });
+  expect(within(picker).getByText(/Home goalie: Home goalie · Away goalie: Away goalie/)).toBeInTheDocument();
   expect(within(picker).getAllByRole('checkbox')).toHaveLength(59);
   expect(within(picker).queryByText(/Map 1/)).not.toBeInTheDocument();
   const labels = ['Boston Bruins ML (Home, incl OT/SO)', 'Toronto +3.5 goals (incl OT/SO)', 'Total goals over 4 (incl OT/SO)', 'Total goals under 4.5 (regulation only)', 'Draw (1X2, regulation only)', 'Toronto ML (regulation only, draw = void)'];
@@ -162,6 +203,7 @@ test('clicking a hockey row offers hockey markets and saves playable Sends with 
   await user.click(screen.getByRole('link', { name: 'Active Bets', exact: true }));
   const card = await screen.findByRole('article', { name: 'Boston Bruins vs Toronto' });
   expect(within(card).getByText(/Hockey · NHL/)).toBeInTheDocument();
+  expect(within(card).queryByText(/Home goalie|Away goalie/)).not.toBeInTheDocument();
   expect(within(card).queryByText(/League of Legends/)).not.toBeInTheDocument();
   await user.type(within(card).getByLabelText(`Play-to price for ${labels[0]}`), '-160');
   await user.click(within(card).getByRole('button', { name: 'Save changes' }));

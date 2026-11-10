@@ -39,10 +39,11 @@ function hockeyMarketGroups(game) {
   })) });
   return groups;
 }
-function gameDescription(game) {
-  return game.sport === 'hockey'
-    ? `Hockey · ${game.league} · Home goalie: ${game.goalie_team || 'Unknown'} · Away goalie: ${game.goalie_opp || 'Unknown'}`
-    : `League of Legends · ${game.league} · ${game.series_format || 'Format unknown'}`;
+function gameDescription(game, { includeGoalies = false } = {}) {
+  if (game.sport !== 'hockey') return `League of Legends · ${game.league} · ${game.series_format || 'Format unknown'}`;
+  const league = `Hockey · ${game.league}`;
+  if (!includeGoalies) return league;
+  return `${league} · Home goalie: ${game.goalie_team || 'Unknown'} · Away goalie: ${game.goalie_opp || 'Unknown'}`;
 }
 function marketGroups(game) {
   if (game.sport === 'hockey') return hockeyMarketGroups(game);

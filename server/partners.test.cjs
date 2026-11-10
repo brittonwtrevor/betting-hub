@@ -3,18 +3,27 @@ const assert = require('node:assert/strict');
 const { createPartnersService } = require('./partners.cjs');
 const copy = value => structuredClone(value);
 function fixture() {
-  let rows = {}, aliases = {}, fail = false;
+  let rows = {}, aliases = {}, payments = {}, fail = false;
   const db = {
     async query(sql) {
       if (sql.startsWith('CREATE')) return [[]];
       if (sql.includes('FROM hub_partner_aliases')) return [Object.entries(aliases).map(([legacy_id, partner_id]) => ({ legacy_id, partner_id }))];
+      if (sql.includes('FROM hub_partner_payments')) return [Object.values(payments).map(copy)];
       return [Object.values(rows).map(copy)];
     },
     async execute(sql, p) {
       if (fail === true || fail && p?.[0] === fail) throw new Error('private-host password=secret');
+      if (sql.startsWith('SELECT * FROM hub_partner_payments')) return [[payments[p[0]]].filter(Boolean).map(copy)];
       if (sql.startsWith('SELECT legacy_id')) return [[aliases[p[0]] ? { partner_id: aliases[p[0]] } : undefined].filter(Boolean)];
       if (sql.startsWith('SELECT')) return [[sql.includes('name_key =') ? Object.values(rows).find(row => row.name_key === p[0]) : rows[p[0]]].filter(Boolean).map(copy)];
       if (sql.startsWith('INSERT INTO hub_partner_aliases')) { aliases[p[0]] = p[1]; return [{}]; }
+      if (sql.startsWith('INSERT INTO hub_partner_payments')) {
+        const [id, direction, amount_cents, reference, recorded_at, partner_id] = p;
+        if (!rows[partner_id]) return [{ affectedRows: 0 }];
+        if (payments[id]) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' });
+        payments[id] = { id, partner_id, direction, amount_cents, reference, recorded_at };
+        return [{ affectedRows: 1 }];
+      }
       if (sql.startsWith('INSERT')) {
         const [id, name, name_key, telegram_channel, created_at, updated_at] = p;
         if (rows[id] || Object.values(rows).some(row => row.name_key === name_key)) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' });
@@ -46,6 +55,24 @@ test('partners and channel edits survive service restart with stable IDs and rev
   assert.equal((await f.restart().list())[0].telegramChannel, '-5550868176');
   await assert.rejects(f.service.update(partner.id, partner), error => error.status === 409);
   await assert.rejects(f.service.add({ name: 'trevor' }), error => error.status === 409);
+});
+
+test('payments persist across restarts, preserve cents, and can be retried without a duplicate', async () => {
+  const f = fixture();
+  const partner = await f.service.add({ name: 'Sam' });
+  const input = { id: 'eaaeff15-68a1-4c09-a77a-1a17bc7f5609', partnerId: partner.id, direction: 'Sent', amount: '100.07', reference: ' transfer ' };
+  const payment = await f.service.addPayment(input);
+  assert.deepEqual(payment, {
+    id: input.id, partnerId: input.partnerId, direction: 'Sent', amount: 100.07, reference: 'transfer',
+    date: '2026-11-04T21:00:00.000Z', status: 'Complete',
+  });
+  assert.deepEqual(await f.restart().addPayment(input), payment);
+  await assert.rejects(f.service.addPayment({ ...input, direction: 'Received' }), { status: 409 });
+  await assert.rejects(f.service.addPayment({ ...input, partnerId: 'missing' }), { status: 404 });
+  for (const amount of ['0', '-100', '10.005', '10000001', '1e2']) {
+    await assert.rejects(f.service.addPayment({ ...input, amount }), { status: 400 });
+  }
+  assert.deepEqual(await f.restart().listPayments(), [payment]);
 });
 
 test('legacy import keeps IDs, is repeatable, and cannot restore an outdated browser channel', async () => {

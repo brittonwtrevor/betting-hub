@@ -1,10 +1,39 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Badge, EmptyState, Panel, SearchField } from '../../components/ui';
+import { parseDate } from '../sports/lol/upcoming';
+import { BetOrder, sortByBetOrder, sportLabel } from './BetOrder';
 import { calculatePL, grades } from './confirmationFields';
 
 const eastern = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 const money = value => value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' }).format(value);
 const receiptStatuses = { pending: 'Queued', sending: 'Sending', sent: 'Sent', error: 'Delivery failed', uncertain: 'Delivery unconfirmed', cancelled: 'Cancelled' };
+const easternDay = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+function betDateKey(bet, message) {
+  const time = parseDate(bet?.betAt) || parseDate(message.date) || parseDate(message.receivedAt);
+  let day = bet?.betDate;
+  if (!day && time) {
+    const { year, month, day: date } = Object.fromEntries(easternDay.formatToParts(time).map(part => [part.type, part.value]));
+    day = `${year}-${month}-${date}`;
+  }
+  return day ? `${day} ${time?.toISOString() || ''}` : '';
+}
+
+function sortReplies(sources, order) {
+  const ordered = sources.map(source => {
+    const betKeys = bet => ({ date: betDateKey(bet, source.message), sport: sportLabel(bet.sport) });
+    const dates = source.bets.map(bet => betDateKey(bet, source.message)).filter(Boolean).sort();
+    const sports = [...new Set(source.bets.map(bet => sportLabel(bet.sport)).filter(Boolean))];
+    return {
+      ...source,
+      bets: sortByBetOrder(source.bets, order, betKeys),
+      orderDate: dates[order.endsWith('oldest') ? 0 : dates.length - 1] || betDateKey(null, source.message),
+      orderSport: sports.length > 1 ? 'Multiple sports' : sports[0] || '',
+    };
+  });
+  return sortByBetOrder(ordered, order, source => ({ date: source.orderDate, sport: source.orderSport }));
+}
+
 async function api(path = '', method = 'GET', body, signal) {
   const response = await fetch(`/api/confirms${path}`, { method, credentials: 'same-origin', cache: 'no-store', signal,
     ...(body !== undefined ? { headers: { 'Content-Type': 'application/json', 'X-Betting-Hub': 'confirms' }, body: JSON.stringify(body) } : {}),
@@ -23,6 +52,7 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
   const change = (key, value) => { setEdited(current => ({ ...current, [key]: value })); setDirty(true); setError(''); };
   const input = (key, label, maxLength, inputMode, type = 'text') => <input type={type} aria-label={`${label} for ${bet.id}`} value={edited[key] ?? ''} maxLength={maxLength} inputMode={inputMode} disabled={busy} onChange={event => change(key, event.target.value)} />;
   const pl = calculatePL(edited);
+  const sportAndLeague = [sportLabel(bet.sport), bet.league].filter(Boolean).join(' · ');
   const receipts = Object.values((bet.notifications || []).reduce((latest, receipt) => ({ ...latest, [receipt.kind]: receipt }), {}));
   async function save() {
     setBusy(true); setError('');
@@ -40,7 +70,7 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
       <td><span aria-label={`Bet ID for ${bet.id}`}>{edited.betId || '—'}</span></td>
       <td title={bet.partnerId ? `Partner ID: ${bet.partnerId}` : undefined}>{bet.partnerName || '—'}<small>{bet.telegramChatName}</small></td>
       <td><span aria-label={`Bet date (ET) for ${bet.id}`}>{edited.betDate || '—'}</span><small>Reply: {eastern(bet.betAt)} ET</small></td>
-      <td className="confirmation-game"><span aria-label={`Game for ${bet.id}`}>{edited.game || '—'}</span>{bet.league && <small>{bet.league}</small>}{bet.gameAt && <small>Game: {eastern(bet.gameAt)} ET</small>}</td><td>{input('team', 'Team', 200, 'text')}</td><td>{input('bet', 'Bet', 300, 'text')}</td>
+      <td className="confirmation-game"><span aria-label={`Game for ${bet.id}`}>{edited.game || '—'}</span>{sportAndLeague && <small>{sportAndLeague}</small>}{bet.gameAt && <small>Game: {eastern(bet.gameAt)} ET</small>}</td><td>{input('team', 'Team', 200, 'text')}</td><td>{input('bet', 'Bet', 300, 'text')}</td>
       <td>{input('risk', 'Risk', 16, 'decimal')}</td><td>{input('odds', 'Odds', 16, 'text')}</td>
       <td><select aria-label={`Grade for ${bet.id}`} value={edited.grade} disabled={busy} onChange={event => change('grade', event.target.value)}>{grades.map(grade => <option key={grade} value={grade}>{grade === 'UNGRADED' ? 'Ungraded' : grade}</option>)}</select></td>
       <td>{edited.grade === 'PARTRETURN' ? input('partialReturn', 'PARTRETURN net P/L', 16, 'text') : '—'}</td>
@@ -55,8 +85,9 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
   </>;
 }
 const statusLabels = { pending: 'Waiting for AI', processing: 'Parsing…', parsed: 'AI parsed', review: 'Needs review', error: 'Parsing failed', manual: 'Manual entry' };
-export default function ConfirmsInbox() {
+export default function ConfirmsInbox({ order, onOrderChange }) {
   const [query, setQuery] = useState('');
+  const [localOrder, setLocalOrder] = useState('newest');
   const [inbox, setInbox] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -121,11 +152,17 @@ export default function ConfirmsInbox() {
   const pollFresh = receiver?.lastPolledAt && Date.now() - Date.parse(receiver.lastPolledAt) < 45000;
   const status = error || receiver?.error ? 'Receiving error' : receiver?.enabled === false ? 'Receiving paused' : pollFresh ? 'Receiving every 10s' : receiver?.lastPolledAt ? 'Receiving delayed' : 'Waiting for receiver';
   const search = query.trim().toLowerCase();
-  const sources = (inbox?.sources || []).filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
+  const sortOrder = order ?? localOrder;
+  const matches = (inbox?.sources || []).filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
     ...source.bets.flatMap(bet => [bet.betId, bet.game, bet.team, bet.bet, bet.grade, bet.partnerName, bet.bettorName, bet.betDate, bet.telegramSenderUsername]), ...(source.message.betIds || [])].join(' ').toLowerCase().includes(search));
+  const sources = sortReplies(matches, sortOrder);
   return <Panel title="Partner confirms" description="Review extracted bets, adjust wager details, and save a grade to record P/L."
     action={<button type="button" className="button button-secondary" disabled={refreshing} onClick={() => refresh.current()}>{refreshing ? 'Refreshing…' : 'Refresh replies'}</button>}>
-    <div className="confirms-controls"><div className="confirms-receiver"><Badge tone={pollFresh && !error && !receiver?.error && receiver?.enabled !== false ? 'success' : 'neutral'}>{status}</Badge><span>Last Telegram check: {eastern(receiver?.lastPolledAt)} ET</span></div><SearchField label="Search saved replies" value={query} onChange={setQuery} placeholder="Bet ID, partner, game, or message…" /></div>
+    <div className="confirms-controls"><div className="confirms-receiver"><Badge tone={pollFresh && !error && !receiver?.error && receiver?.enabled !== false ? 'success' : 'neutral'}>{status}</Badge><span>Last Telegram check: {eastern(receiver?.lastPolledAt)} ET</span></div>
+      <div className="confirms-filters"><SearchField label="Search saved replies" value={query} onChange={setQuery} placeholder="Bet ID, partner, game, or message…" />
+        <BetOrder value={sortOrder} onChange={onOrderChange || setLocalOrder} dateLabel="Bet date" />
+      </div>
+    </div>
     {error && <p className="sends-error" role="alert">{error}{inbox ? ' Previously loaded replies remain below.' : ''}</p>}{receiver?.error && <p className="sends-error" role="alert">{receiver.error}</p>}
     {inbox?.parser && (!inbox.parser.configured || !inbox.parser.enabled) && <p className="confirms-note">{!inbox.parser.configured ? 'AI parsing needs a DigitalOcean model access key in server settings.' : 'Automatic AI parsing is paused.'} You can add and edit bets manually.</p>}
     {inbox?.parser?.error && <p className="sends-error" role="alert">{inbox.parser.error}</p>}

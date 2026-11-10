@@ -1,17 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { readPartners, storageKey } from './registry';
 
-async function request(path = '', method = 'GET', body) {
+const paymentsPath = '/ledger/payments';
+
+async function request(path = '', method = 'GET', body, signal) {
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(`/api/partners${path}`, { method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
       ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json', 'X-Betting-Hub': 'partners' }, body: JSON.stringify(body) }) });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.message || 'Unable to load or save partners.');
+    if (!response.ok) throw new Error(result.message || (path === paymentsPath ? 'Unable to load or save partner payments.' : 'Unable to load or save partners.'));
     return result;
-  } catch (error) { if (error.name === 'AbortError') throw new Error('The partner request timed out. Refresh partners to check the saved record.'); throw error; }
-  finally { clearTimeout(timeout); }
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(path === paymentsPath ? 'The payment request timed out. You can retry it.' : 'The partner request timed out. Refresh partners to check the saved record.');
+    throw error;
+  } finally { clearTimeout(timeout); signal?.removeEventListener('abort', abort); }
+}
+
+export async function listPartnerPayments(signal) {
+  const { payments } = await request(paymentsPath, 'GET', undefined, signal);
+  if (!Array.isArray(payments)) throw new Error('The partner database returned an unreadable payment history.');
+  return payments;
+}
+
+export async function savePartnerPayment(input) {
+  const { payment } = await request(paymentsPath, 'POST', input);
+  if (payment?.id !== input.id) throw new Error('The partner database returned an unreadable payment receipt. Try saving again.');
+  return payment;
 }
 
 export function usePartners(enabled = true) {

@@ -1,5 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { createSendsService, normalizeGame, chooseMarkets, editDraft, gameKey, teamPrefix, telegramText } = require('./sends.cjs');
 const { marketGroups, allMarkets } = require('../src/features/bets/markets');
 const env = { LOL_DO_DB_HOST: 'db.example', LOL_DO_DB_USER: 'reader', LOL_DO_DB_PASSWORD: 'test-only', LOL_DO_DB_NAME: 'defaultdb' };
@@ -294,8 +295,23 @@ test('hockey markets preserve period rules, goalie scenarios, fair prices, and p
   assert.equal(merged.markets[0].playTo, '+150');
   assert.equal((await service.list())[0].game.sport, 'hockey');
   const message = telegramText(saved);
-  assert.match(message, /Hockey · NHL/);
+  assert.equal(message.split('\n')[2], 'Hockey · NHL · Nov 4, 5:00 PM EST');
   assert.match(message, /Total goals under 4 \(regulation only\)/);
   assert.match(message, /ML \(regulation only, draw = void\)/);
   assert.doesNotMatch(message, /League of Legends|Format unknown/);
+
+  const channel = '-100123';
+  const legacyText = message.replace('Hockey · NHL', 'Hockey · NHL · Home goalie: Home goalie · Away goalie: Away goalie');
+  const fingerprint = createHash('sha256').update(legacyText).digest('hex');
+  const key = createHash('sha256').update(`${channel}\n${fingerprint}`).digest('hex');
+  const row = db.rows.get(gameKey(normalized));
+  row.payload = JSON.stringify({ ...JSON.parse(row.payload), deliveries: [{ key, channel, status: 'sent' }] });
+  const recipients = [{ id: 'sam', name: 'Sam', telegramChannel: channel }];
+  const calls = [];
+  const telegram = { async sendMessage(input) { calls.push(input); return { message: { messageId: 42 } }; } };
+  const retried = await service.send(merged.id, { ...saved, revision: merged.revision, recipients }, telegram);
+  assert.equal(calls.length, 0);
+  await service.send(merged.id, { ...retried, notes: 'Updated price guidance' }, telegram);
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0].text, /Home goalie|Away goalie/);
 });
