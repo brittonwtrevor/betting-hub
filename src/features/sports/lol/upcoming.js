@@ -25,7 +25,7 @@ export function cellText(row, column) {
 export function filterGames(games, columns, { league = 'ALL', lastLineup = true, search = '', filters = {} }) {
   const term = search.toLowerCase().trim();
   return games.filter(row => (league === 'ALL' || row.league === league)
-    && (!lastLineup || Number(row.islastlineup) === 1)
+    && (!lastLineup || row.sport === 'hockey' || Number(row.islastlineup) === 1)
     && (!term || columns.some(column => cellText(row, column).toLowerCase().includes(term)))
     && columns.every(column => !filters[column.key]
       || cellText(row, column).toLowerCase().includes(filters[column.key].toLowerCase())));

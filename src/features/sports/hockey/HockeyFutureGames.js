@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Icon from '../../../components/Icon';
 import { Badge, EmptyState, Panel, SearchField, SelectField } from '../../../components/ui';
 import { easternTime } from '../lol/upcoming';
-import { cellText, filterGames, sortFutureGames } from './futureGames';
+import { cellText, filterGames, hockeySendGame, sortFutureGames } from './futureGames';
 import { useSends } from '../../bets/SendsContext';
 import '../lol/lol.css';
 import './hockey.css';
@@ -54,10 +54,7 @@ export default function HockeyFutureGames() {
   const pageRows = visible.slice(currentPage * Number(pageSize), (currentPage + 1) * Number(pageSize));
   const gameCount = useMemo(() => new Set(visible.map(row => row.id)).size, [visible]);
 
-  const selectGame = row => openGame({
-    ...row, sport: 'hockey', game_id: row.id, team_a: row.homeTeamName, team_b: row.visitingTeamName,
-    league: row.leagueName, begin_at: row.dateTime, publishedAt: data?.source?.updatedAt || '',
-  });
+  const selectGame = row => openGame(hockeySendGame(row, data?.source?.updatedAt));
 
   return <Panel>
     <div className="panel-controls lol-controls hockey-controls">

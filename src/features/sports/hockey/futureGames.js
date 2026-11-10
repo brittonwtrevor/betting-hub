@@ -2,6 +2,13 @@ import { easternTime, parseDate, sortGames } from '../lol/upcoming';
 
 const dateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' });
 
+export function hockeySendGame(row, publishedAt) {
+  return {
+    ...row, sport: 'hockey', game_id: row.id, team_a: row.homeTeamName, team_b: row.visitingTeamName,
+    league: row.leagueName, begin_at: row.dateTime, publishedAt: publishedAt || '',
+  };
+}
+
 export function gameDate(row) {
   const date = parseDate(row.dateTime);
   if (!date) return row.date || '';
