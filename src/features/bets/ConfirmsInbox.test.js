@@ -10,7 +10,7 @@ const relativeDay = days => new Date(Date.parse(today) + days * 86400000).toISOS
 const reply = { botId: '1', updateId: 42, messageId: 10, kind: 'message', chat: 'trevor_partner', from: 'TrevorBRedSox', chatId: '-5550868176', text: 'HAN187 $1 -110 ML', betIds: ['HAN187'], date: `${today}T18:17:00.000Z` };
 const id = 'a'.repeat(64);
 const base = { id: 'bet-1', sourceId: id, revision: 1, partnerId: 'trevor', partnerName: 'Trevor', bettorName: 'Trevor Britton',
-  betDate: today, betAt: reply.date, gameAt: '2026-11-05T00:00:00.000Z', telegramSenderId: '123', telegramSenderUsername: 'TrevorBRedSox',
+  betDate: today, betAt: reply.date, rawResponse: reply.text, gameAt: '2026-11-05T00:00:00.000Z', telegramSenderId: '123', telegramSenderUsername: 'TrevorBRedSox',
   ...normalizeFields({ betId: 'HAN187', game: 'Hanwha Life Esports vs Bilibili Gaming', team: 'Hanwha Life Esports', bet: 'Moneyline', risk: 1, odds: -110, grade: 'UNGRADED' }) };
 const response = (value, ok = true) => ({ ok, json: async () => value });
 let stored;
@@ -46,6 +46,8 @@ test('shows partner and read-only bet details, hides bettor, and preserves metad
   expect(screen.getByLabelText('Bet ID for bet-1')).toHaveTextContent('HAN187');
   expect(screen.getByLabelText('Bet date (ET) for bet-1')).toHaveTextContent(today);
   expect(screen.getByLabelText('Game for bet-1')).toHaveTextContent(base.game);
+  expect(screen.getByLabelText('Raw response for bet-1')).toHaveTextContent(reply.text);
+  expect(screen.queryByRole('textbox', { name: 'Raw response for bet-1' })).not.toBeInTheDocument();
   for (const label of ['Bet ID', 'Bet date (ET)', 'Game']) expect(screen.getByLabelText(`${label} for bet-1`)).not.toHaveAttribute('contenteditable');
   expect(screen.queryByRole('textbox', { name: /Bet ID|Bet date|Game/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('columnheader', { name: 'BETTOR' })).not.toBeInTheDocument();
@@ -105,7 +107,7 @@ test('loads editable wager fields, grading options and original source without c
   const grade = screen.getByRole('combobox', { name: 'Grade for bet-1' });
   expect(within(grade).getAllByRole('option').map(option => option.value)).toEqual(['UNGRADED', 'VOID', 'WIN', 'LOSS', 'PARTRETURN']);
   expect(screen.getByLabelText('P/L for bet-1')).toHaveTextContent('—');
-  expect(screen.getByText(reply.text)).toBeInTheDocument();
+  expect(screen.getByLabelText('Raw response for bet-1')).toHaveTextContent(reply.text);
   expect(screen.queryByLabelText('Bot token')).not.toBeInTheDocument();
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });

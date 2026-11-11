@@ -51,6 +51,7 @@ test('MySQL upgrades existing fills and keeps typed reporting columns synchroniz
     assert.equal(bet.telegramSenderId, '123');
     assert.equal(bet.betDate, '2026-11-04'); // Reply's Eastern date, not UTC date.
     assert.equal(bet.gameAt, '2026-11-05T00:00:00.000Z');
+    assert.equal(bet.rawResponse, message.text);
     const [[upgraded]] = await pool.query('SELECT bet_id, risk, partner_id, telegram_sender_id, bet_date FROM hub_confirm_bets');
     assert.deepEqual({ ...upgraded }, { bet_id: 'BOS145', risk: '500.00', partner_id: 'partner-1', telegram_sender_id: '123', bet_date: '2026-11-04' });
     bet = await service.update(bet.id, { ...bet, bettorName: 'Luke', betDate: '2026-11-03', risk: 200, odds: 150, grade: 'WIN' });
@@ -61,6 +62,14 @@ test('MySQL upgrades existing fills and keeps typed reporting columns synchroniz
     assert.equal(graded.risk, '200.00');
     assert.equal(graded.pl, '300.00');
     assert.ok(graded.graded_at);
+    const [report] = await service.listReportBets({ includeIncomplete: true });
+    assert.equal(report.rawResponse, message.text);
+    assert.equal(report.splitPercent, 100);
+    const editedSplit = await service.updateSplit(bet.id, { revision: bet.revision, splitPercent: 50.25 });
+    const [[savedSplit]] = await pool.query('SELECT split_bps FROM hub_confirm_bets');
+    assert.equal(savedSplit.split_bps, 5025);
+    assert.equal((await service.listReportBets())[0].yourShare, 150.75);
+    bet = { ...bet, revision: editedSplit.revision };
     await service.remove(bet.id, bet, 'test-user');
     assert.equal((await service.list()).sources[0].bets.length, 0);
     const [[deleted]] = await pool.query('SELECT deleted_at, grade, pl, partner_id FROM hub_confirm_bets');
@@ -73,7 +82,7 @@ test('MySQL upgrades existing fills and keeps typed reporting columns synchroniz
     await service.tick();
     assert.equal(parseCalls, 0);
     const [history] = await pool.query('SELECT action FROM hub_confirm_history ORDER BY id');
-    assert.deepEqual(history.map(row => row.action), ['grade', 'delete', 'telegram_edit']);
+    assert.deepEqual(history.map(row => row.action), ['grade', 'split_edit', 'delete', 'telegram_edit']);
     // An independent startup must accept the already-upgraded schema unchanged.
     const restart = makeService();
     assert.equal((await restart.list()).sources[0].deletedBetCount, 1);

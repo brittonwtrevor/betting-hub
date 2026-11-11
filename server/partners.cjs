@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
 const { normalizeTelegramChannel } = require('../src/features/partners/telegram');
+const { fullSplitBps, splitError, splitToBps } = require('../src/features/partners/split');
 const invalid = (message, status = 400) => Object.assign(new Error(message), { status, partnerSafe: true });
 function normalize(input, requireId = false) {
   if (!input || typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 200) throw invalid('Enter a partner name (maximum 200 characters).');
@@ -9,9 +10,12 @@ function normalize(input, requireId = false) {
   let telegramChannel;
   try { telegramChannel = normalizeTelegramChannel(input.telegramChannel || ''); }
   catch (error) { throw invalid(error.message); }
-  return { id: input.id, name: input.name.trim(), telegramChannel };
+  const splitBps = input.splitPercent === undefined ? undefined : splitToBps(input.splitPercent);
+  if (splitBps === null) throw invalid(splitError);
+  return { id: input.id, name: input.name.trim(), telegramChannel, splitBps };
 }
 const record = row => ({ id: row.id, name: row.name, telegramChannel: row.telegram_channel,
+  splitPercent: row.split_bps / 100,
   revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at });
 const paymentRecord = row => ({ id: row.id, partnerId: row.partner_id, direction: row.direction,
   amount: row.amount_cents / 100, reference: row.reference, date: row.recorded_at, status: 'Complete' });
@@ -37,9 +41,15 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
       await pool.query(`CREATE TABLE IF NOT EXISTS hub_partners (
       id VARCHAR(100) NOT NULL PRIMARY KEY, name VARCHAR(200) NOT NULL,
       name_key VARCHAR(200) NOT NULL, telegram_channel VARCHAR(200) NOT NULL DEFAULT '',
+      split_bps SMALLINT UNSIGNED NOT NULL DEFAULT 10000,
       revision INT NOT NULL DEFAULT 1, created_at VARCHAR(24) NOT NULL, updated_at VARCHAR(24) NOT NULL,
       UNIQUE KEY partner_names (name_key)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+      const [columns] = await pool.query("SHOW COLUMNS FROM hub_partners LIKE 'split_bps'");
+      if (!columns.length) {
+        try { await pool.query('ALTER TABLE hub_partners ADD COLUMN split_bps SMALLINT UNSIGNED NOT NULL DEFAULT 10000'); }
+        catch (error) { if (error.code !== 'ER_DUP_FIELDNAME') throw error; }
+      }
       await pool.query(`CREATE TABLE IF NOT EXISTS hub_partner_aliases (
         legacy_id VARCHAR(100) NOT NULL PRIMARY KEY, partner_id VARCHAR(100) NOT NULL,
         INDEX partner_aliases (partner_id)
@@ -74,9 +84,10 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
   async function insert(db, partner) {
     const at = now().toISOString();
     const id = partner.id || makeId();
-    await db.execute('INSERT INTO hub_partners (id, name, name_key, telegram_channel, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, partner.name, partner.name.toLowerCase(), partner.telegramChannel, at, at]);
-    return { id, name: partner.name, telegramChannel: partner.telegramChannel, revision: 1, createdAt: at, updatedAt: at };
+    const splitBps = partner.splitBps ?? fullSplitBps;
+    await db.execute('INSERT INTO hub_partners (id, name, name_key, telegram_channel, split_bps, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, partner.name, partner.name.toLowerCase(), partner.telegramChannel, splitBps, at, at]);
+    return { id, name: partner.name, telegramChannel: partner.telegramChannel, splitPercent: splitBps / 100, revision: 1, createdAt: at, updatedAt: at };
   }
   return {
     async listPayments() {
@@ -108,6 +119,15 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
       const [aliases] = await db.query('SELECT legacy_id, partner_id FROM hub_partner_aliases');
       return rows.map(row => ({ ...record(row), legacyIds: aliases.filter(alias => alias.partner_id === row.id).map(alias => alias.legacy_id) }));
     },
+    async findSplitBps(id) {
+      const db = await database();
+      const [[partner]] = await db.execute(`SELECT split_bps FROM hub_partners
+        WHERE id = COALESCE(
+          (SELECT id FROM hub_partners WHERE id = ?),
+          (SELECT partner_id FROM hub_partner_aliases WHERE legacy_id = ?)
+        )`, [id, id]);
+      return partner?.split_bps ?? fullSplitBps;
+    },
     async add(input) {
       const partner = normalize(input);
       return transaction(async db => {
@@ -115,7 +135,10 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
           const [[existing]] = await db.execute('SELECT * FROM hub_partners WHERE id = ? FOR UPDATE', [partner.id]);
           // Retrying a completed create is safe; it never edits the existing row.
           if (existing) {
-            if (existing.name !== partner.name || existing.telegram_channel !== partner.telegramChannel) throw invalid('This partner ID is already saved. Refresh partners before editing.', 409);
+            if (existing.name !== partner.name || existing.telegram_channel !== partner.telegramChannel ||
+                (partner.splitBps !== undefined && existing.split_bps !== partner.splitBps)) {
+              throw invalid('This partner ID is already saved. Refresh partners before editing.', 409);
+            }
             return record(existing);
           }
         }
@@ -130,9 +153,11 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
         if (!existing) throw invalid('This partner was not found. Refresh partners.', 404);
         if (existing.revision !== input.revision) throw invalid('This partner changed on another screen. Refresh partners before saving.', 409);
         const at = now().toISOString();
-        await db.execute('UPDATE hub_partners SET name = ?, name_key = ?, telegram_channel = ?, revision = revision + 1, updated_at = ? WHERE id = ?',
-          [partner.name, partner.name.toLowerCase(), partner.telegramChannel, at, id]);
-        return { id, name: partner.name, telegramChannel: partner.telegramChannel, revision: existing.revision + 1, createdAt: existing.created_at, updatedAt: at };
+        const splitBps = partner.splitBps ?? existing.split_bps;
+        await db.execute('UPDATE hub_partners SET name = ?, name_key = ?, telegram_channel = ?, split_bps = ?, revision = revision + 1, updated_at = ? WHERE id = ?',
+          [partner.name, partner.name.toLowerCase(), partner.telegramChannel, splitBps, at, id]);
+        return { id, name: partner.name, telegramChannel: partner.telegramChannel, splitPercent: splitBps / 100,
+          revision: existing.revision + 1, createdAt: existing.created_at, updatedAt: at };
       });
     },
     async importLegacy(input) {

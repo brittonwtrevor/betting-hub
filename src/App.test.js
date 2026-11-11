@@ -155,7 +155,8 @@ test('sidebar links change workspaces and the mobile menu opens without a top ba
 
 test('Raw Bet Data filters confirmed bets and downloads all matching rows across pages', async () => {
   const fill = { partnerId: 'a', partnerName: 'Partner A', betDate: '2026-11-04', sport: 'hockey', league: 'NCAA',
-    selection: 'Over 5.5, incl "OT"', event: '=1+1', stake: 100, odds: -110, status: 'LOSS', settledProfit: -100 };
+    selection: 'Over 5.5, incl "OT"', event: '=1+1', stake: 100, odds: -110, status: 'LOSS', settledProfit: -100,
+    rawResponse: 'BOS145 Harvard +2.5 and Chiefs ML parlay +300 $2,500.00\nOriginal "message"' };
   const bets = [
     ...Array.from({ length: 51 }, (_, index) => ({ ...fill, id: `fill-${index}`, betId: `BOS${String(index).padStart(3, '0')}` })),
     { ...fill, id: 'older', betId: 'OLD123', betDate: '2026-11-03' },
@@ -181,6 +182,8 @@ test('Raw Bet Data filters confirmed bets and downloads all matching rows across
     await user.click(screen.getByRole('tab', { name: 'Raw Bet Data' }));
     const table = await screen.findByRole('table', { name: 'Raw bet data' });
     await screen.findByRole('button', { name: 'Download CSV (56)' });
+    expect(within(table).getByRole('columnheader', { name: 'Raw response' })).toBeInTheDocument();
+    expect(within(table).getAllByRole('cell', { name: /Harvard \+2.5 and Chiefs ML parlay/ })).toHaveLength(50);
     expect(screen.getByRole('tab', { name: 'Raw Bet Data' })).toHaveAttribute('aria-selected', 'true');
     fireEvent.change(screen.getByLabelText('From (ET)'), { target: { value: '2026-11-04' } });
     fireEvent.change(screen.getByLabelText('Through (ET)'), { target: { value: '2026-11-04' } });
@@ -204,6 +207,8 @@ test('Raw Bet Data filters confirmed bets and downloads all matching rows across
     expect(csv).toContain('"Over 5.5, incl ""OT"""');
     expect(csv).toContain(`"'=1+1"`);
     expect(csv).toContain(',-110,');
+    expect(csv).toContain('"Raw response"');
+    expect(csv).toContain('"BOS145 Harvard +2.5 and Chiefs ML parlay +300 $2,500.00\nOriginal ""message"""');
     await user.click(screen.getByRole('button', { name: 'Next' }));
     expect(within(table).getByText('BOS050')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));

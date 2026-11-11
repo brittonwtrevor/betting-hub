@@ -108,13 +108,14 @@ function ConfirmationRow({ bet, onSave, onDelete }) {
       <td><select aria-label={`Grade for ${bet.id}`} value={edited.grade} disabled={busy} onChange={event => change('grade', event.target.value)}>{grades.map(grade => <option key={grade} value={grade}>{grade === 'UNGRADED' ? 'Ungraded' : grade}</option>)}</select></td>
       <td>{edited.grade === 'PARTRETURN' ? input('partialReturn', 'PARTRETURN net P/L', 16, 'text') : '—'}</td>
       <td><output aria-label={`P/L for ${bet.id}`} className={pl > 0 ? 'confirm-profit' : pl < 0 ? 'confirm-loss' : ''}>{money(pl)}</output>{dirty && <small>Unsaved</small>}</td>
+      <td className="bet-raw-response"><span aria-label={`Raw response for ${bet.id}`}>{bet.rawResponse || '—'}</span></td>
       <td className="confirmation-actions"><button type="button" className="button button-primary" disabled={!dirty || busy} onClick={save}>{busy && !deleting ? 'Saving…' : 'Save'}</button>{dirty && <button type="button" className="button button-secondary" disabled={busy} onClick={() => { setEdited(bet); setDirty(false); setError(''); }}>Reset edits</button>}
         {deleting ? <div role="group" aria-label={`Delete confirmation for ${bet.id}`}><p>Delete {bet.betId}? The raw reply and history will be kept.</p><button type="button" className="button button-secondary" disabled={busy} onClick={remove}>{busy ? 'Deleting…' : 'Confirm delete'}</button><button type="button" className="button button-secondary" disabled={busy} onClick={() => setDeleting(false)}>Cancel delete</button></div> : <button type="button" className="button button-secondary" disabled={busy || dirty} title={dirty ? 'Save or reset edits before deleting.' : undefined} onClick={() => setDeleting(true)}>Delete bet</button>}
         {!bet.complete && !dirty && <small>Needs review</small>}<small>Saved: {eastern(edited.updatedAt || edited.createdAt)} ET{edited.gradedAt ? ` · Graded: ${eastern(edited.gradedAt)} ET` : ''}</small>
         {receipts.map(receipt => <small key={receipt.id} title={receipt.error || undefined}>Telegram {receipt.kind === 'logged' ? 'log' : 'grade'}: {receiptStatuses[receipt.status] || receipt.status}{receipt.error ? ` · ${receipt.error}` : ''}</small>)}</td>
     </tr>
-    {error && <tr><td colSpan={12}><p className="sends-error" role="alert">{error}</p></td></tr>}
-    {dirty && bet.revision > edited.revision && <tr><td colSpan={12}><p className="sends-error">This bet changed on another screen. Your edits are preserved; refresh Confirms before saving.</p></td></tr>}
+    {error && <tr><td colSpan={13}><p className="sends-error" role="alert">{error}</p></td></tr>}
+    {dirty && bet.revision > edited.revision && <tr><td colSpan={13}><p className="sends-error">This bet changed on another screen. Your edits are preserved; refresh Confirms before saving.</p></td></tr>}
   </>;
 }
 const statusLabels = { pending: 'Waiting for AI', processing: 'Parsing…', parsed: 'AI parsed', review: 'Needs review', error: 'Parsing failed', manual: 'Manual entry' };
@@ -207,7 +208,7 @@ export default function ConfirmsInbox({ filters, onFiltersChange }) {
   const defaults = defaultBetDates(true);
   const { days, sources: datedSources } = filterReplies(inbox?.sources || [], selection.sport, selection.dates ?? defaults);
   const sources = datedSources.filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
-    ...source.bets.flatMap(bet => [bet.betId, bet.game, bet.team, bet.bet, bet.grade, bet.partnerName, bet.bettorName, bet.betDate, bet.telegramSenderUsername]), ...(source.message.betIds || [])].join(' ').toLowerCase().includes(search));
+    ...source.bets.flatMap(bet => [bet.betId, bet.game, bet.team, bet.bet, bet.grade, bet.partnerName, bet.bettorName, bet.betDate, bet.telegramSenderUsername, bet.rawResponse]), ...(source.message.betIds || [])].join(' ').toLowerCase().includes(search));
   const groups = groupByBetId(sources);
   return <Panel title="Partner confirms" description="Review extracted bets, adjust wager details, and save a grade to record P/L."
     action={<button type="button" className="button button-secondary" disabled={refreshing} onClick={() => refresh.current()}>{refreshing ? 'Refreshing…' : 'Refresh replies'}</button>}>
@@ -226,8 +227,8 @@ export default function ConfirmsInbox({ filters, onFiltersChange }) {
       return <article className="confirmation-source" key={betId} aria-label={label}>
         <div className="confirmation-header"><h2 className="confirmation-group-title">{betId || label}</h2><Badge>{bets.length} {bets.length === 1 ? 'bet' : 'bets'}</Badge></div>
         {bets.length > 0 && <div className="table-scroll"><table className="data-table confirmation-fields" aria-label={`Bets for ${betId || 'unassigned replies'}`}>
-          <colgroup>{[6, 9, 8, 14, 10, 10, 6, 6, 10, 7, 6, 8].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
-          <thead><tr>{['BETID', 'PARTNER', 'BET DATE (ET)', 'GAME', 'TEAM', 'BET', 'RISK ($)', 'ODDS', 'GRADE', 'PARTRETURN P/L ($)', 'P/L', 'Actions'].map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
+          <colgroup>{[5, 8, 7, 11, 8, 10, 6, 5, 8, 6, 6, 12, 8].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
+          <thead><tr>{['BETID', 'PARTNER', 'BET DATE (ET)', 'GAME', 'TEAM', 'BET', 'RISK ($)', 'ODDS', 'GRADE', 'PARTRETURN P/L ($)', 'P/L', 'Raw response', 'Actions'].map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
           <tbody>{bets.map(({ bet }) => <ConfirmationRow key={bet.id} bet={bet} onSave={saveBet} onDelete={deleteBet} />)}</tbody>
         </table></div>}
         <details className="confirmation-replies" open={bets.length === 0}>

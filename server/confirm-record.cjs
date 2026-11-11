@@ -26,6 +26,7 @@ function recordMetadata(source, fields, at) {
     betDate: easternDate(betAt), betAt, receivedAt: iso(message.receivedAt),
     gameAt: iso(game?.begin_at), sport: game?.sport || '', league: game?.league || '',
     gameId: game?.match_id || game?.game_id || '',
+    rawResponse: message.text || '',
     gradedAt: fields.grade !== 'UNGRADED' ? at : null, deletedAt: null,
   };
 }
@@ -44,6 +45,8 @@ const columns = {
   bet_date: ['VARCHAR(10)', 'betDate'], bet_at: ['VARCHAR(24)', 'betAt'], received_at: ['VARCHAR(24)', 'receivedAt'],
   game_at: ['VARCHAR(24)', 'gameAt'], graded_at: ['VARCHAR(24)', 'gradedAt'], deleted_at: ['VARCHAR(24)', 'deletedAt'],
   sport: ['VARCHAR(40)', 'sport'], league: ['VARCHAR(200)', 'league'], game_id: ['VARCHAR(100)', 'gameId'],
+  raw_response: ['TEXT', 'rawResponse'],
+  split_bps: ['SMALLINT UNSIGNED', 'splitBps'],
 };
 
 async function migrateRecords(pool) {
@@ -61,6 +64,11 @@ async function migrateRecords(pool) {
     if (!indexes.some(index => index.Key_name === 'partner_bet_dates')) additions.push('ADD INDEX partner_bet_dates (partner_id, bet_date, deleted_at)');
     if (!indexes.some(index => index.Key_name === 'sender_bet_dates')) additions.push('ADD INDEX sender_bet_dates (telegram_sender_id, bet_date)');
     if (additions.length) await db.query(`ALTER TABLE hub_confirm_bets ${additions.join(', ')}`);
+
+    // Fill only missing snapshots; later Telegram edits cannot replace them.
+    await db.query(`UPDATE hub_confirm_bets b JOIN hub_confirm_sources s ON s.id = b.source_id
+      SET b.payload = JSON_SET(b.payload, '$.rawResponse', COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.message.text')), 'null'), ''))
+      WHERE JSON_EXTRACT(b.payload, '$.rawResponse') IS NULL`);
 
     const [legacy] = await db.query(`SELECT b.id, b.payload, b.updated_at, s.bot_id, s.update_id, s.payload AS source_payload
       FROM hub_confirm_bets b JOIN hub_confirm_sources s ON s.id = b.source_id

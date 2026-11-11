@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PartnersPage from './PartnersPage';
+import { splitAmount, splitToBps } from './split';
 
 const partners = [
   { id: 'a', name: 'Partner A', openExposure: 100, owedToYou: 25, owedToPartner: 0 },
@@ -28,6 +29,15 @@ beforeEach(() => {
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/confirms/bets') return response({ bets: reportedBets });
     const input = options.body && JSON.parse(options.body);
+    if (url.endsWith('/split')) {
+      const id = url.split('/').at(-2);
+      const bet = reportedBets.find(item => item.id === id);
+      const bps = splitToBps(input.splitPercent);
+      const saved = { id, revision: bet.revision + 1, splitPercent: input.splitPercent,
+        yourRisk: splitAmount(bet.stake, bps), yourShare: splitAmount(bet.settledProfit, bps) };
+      reportedBets = reportedBets.map(item => item.id === id ? { ...item, ...saved } : item);
+      return response({ bet: saved });
+    }
     if (url === '/api/partners/ledger/payments') {
       if (options.method !== 'POST') return response({ payments: recordedPayments });
       const saved = recordedPayments.find(payment => payment.id === input.id);
@@ -209,12 +219,11 @@ test('shows Telegram fills under the correct partner and reloads saved grades an
   expect(within(table).queryByText('TOR145')).not.toBeInTheDocument();
   reportedBets = [{ ...fill, status: 'WIN', settledProfit: 300 }, reportedBets[1]];
   fireEvent.click(screen.getByRole('button', { name: 'Refresh partners' }));
-  expect(await within(table).findByText('$300.00')).toBeInTheDocument();
+  expect(await within(table).findByText('WIN')).toBeInTheDocument();
   expect(within(table).getByText('WIN')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Balances', exact: true }));
   const balances = screen.getByRole('table', { name: 'Partner balances' });
-  expect(within(balances).getAllByText('$300.00')).toHaveLength(2);
-  expect(within(balances).getAllByText('—')).toHaveLength(1);
+  expect(within(balances).getAllByText('$300.00')).toHaveLength(3);
 });
 
 test('payments clear each partner’s settled balance in either direction and survive a remount', async () => {
@@ -264,4 +273,61 @@ test('payments clear each partner’s settled balance in either direction and su
   expect(await screen.findByText('Partner B transfer')).toBeInTheDocument();
   expect(screen.queryByText('Final transfer')).not.toBeInTheDocument();
   expect(stat('Owed to you')).toHaveTextContent('$0.00');
+});
+
+test('edits partner and bet splits independently and exports the selected partner’s exact shares', async () => {
+  persisted = [{ id: 'a', name: 'Partner A', telegramChannel: '@sam', splitPercent: 50, revision: 1 },
+    { id: 'b', name: 'Partner B', splitPercent: 100, revision: 1 }];
+  reportedBets = [
+    { id: 'first', betId: 'BOS145', partnerId: 'a', stake: 1000, status: 'WIN', settledProfit: 1000, splitPercent: 50, revision: 1 },
+    { id: 'open', betId: 'BOS146', partnerId: 'a', stake: 1000, status: 'UNGRADED', settledProfit: null, splitPercent: 50, revision: 1 },
+    { id: 'other', betId: 'TOR145', partnerId: 'b', stake: 1000, status: 'WIN', settledProfit: 1000, splitPercent: 100, revision: 1 },
+  ];
+  recordedPayments = [{ id: 'payment', partnerId: 'a', amount: 200, direction: 'Received', status: 'Complete' }];
+  render(<PartnersPage />);
+  const tabs = screen.getByRole('group', { name: 'Partners' });
+  fireEvent.click(await within(tabs).findByRole('button', { name: 'Partner A' }));
+  const table = screen.getByRole('table', { name: 'Bet reports' });
+  await within(table).findByText('BOS145');
+  const stat = label => screen.getByText(label, { selector: '.stat-label' }).closest('.stat-card').querySelector('.stat-value');
+  expect(stat('Open exposure')).toHaveTextContent('$500.00');
+  expect(stat('Owed to you')).toHaveTextContent('$300.00');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit partner split' }));
+  fireEvent.change(screen.getByLabelText('Split (%)'), { target: { value: '25' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save partner split' }));
+  await waitFor(() => expect(persisted.find(partner => partner.id === 'a')).toMatchObject({ splitPercent: 25, telegramChannel: '@sam' }));
+  expect(stat('Open exposure')).toHaveTextContent('$500.00');
+  expect(stat('Owed to you')).toHaveTextContent('$300.00');
+
+  const editBet = within(table).getByRole('button', { name: 'Edit split for BOS145' });
+  await waitFor(() => expect(editBet).toBeEnabled());
+  fireEvent.click(editBet);
+  fireEvent.change(within(table).getByLabelText('Split for BOS145'), { target: { value: '25' } });
+  fireEvent.click(within(table).getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(stat('Owed to you')).toHaveTextContent('$50.00'));
+  expect(stat('Open exposure')).toHaveTextContent('$500.00');
+
+  const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  URL.createObjectURL = jest.fn(() => 'blob:partner-history');
+  URL.revokeObjectURL = jest.fn();
+  const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Download bet history (2)' }));
+    const csv = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsText(URL.createObjectURL.mock.calls[0][0]);
+    });
+    expect(click.mock.instances[0].download).toBe('partner-a-bet-history.csv');
+    expect(csv).toContain('"Split (%)","Your risk","Your P/L"');
+    expect(csv).toContain('"WIN",1000,25,250,250');
+    expect(csv).not.toContain('TOR145');
+  } finally {
+    click.mockRestore();
+    URL.createObjectURL = create;
+    URL.revokeObjectURL = revoke;
+  }
 });

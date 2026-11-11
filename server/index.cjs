@@ -183,10 +183,10 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       try { return json(200, { bets: await confirmsService.listReportBets({ includeIncomplete }) }); }
       catch (error) { return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load confirmed bet data. Try refreshing.' }); }
     }
-    const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36}))?$/.exec(pathname);
+    const confirmRoute = /^\/api\/confirms(?:\/sources\/([a-f0-9]{64})\/(manual|retry)|\/bets\/([a-zA-Z0-9-]{1,36})(\/split)?)?$/.exec(pathname);
     if (confirmRoute) {
-      const [, sourceId, action, betId] = confirmRoute;
-      const allowed = sourceId ? ['POST'] : betId ? ['PATCH', 'DELETE'] : ['GET', 'HEAD'];
+      const [, sourceId, action, betId, split] = confirmRoute;
+      const allowed = sourceId ? ['POST'] : split ? ['PATCH'] : betId ? ['PATCH', 'DELETE'] : ['GET', 'HEAD'];
       if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
       try {
@@ -205,6 +205,7 @@ function createHandler({ username, password, directory, requireHttps = true, upc
           catch { return json(400, { message: 'Invalid confirmation JSON.' }); }
         }
         if (!confirmsService) return json(503, { message: 'Confirms storage is not configured yet.' });
+        if (split) return json(200, { bet: await confirmsService.updateSplit(betId, body, username) });
         if (betId) return json(200, { bet: await (request.method === 'DELETE' ? confirmsService.remove(betId, body, username) : confirmsService.update(betId, body, username)) });
         if (action === 'manual') return json(200, { bet: await confirmsService.addManual(sourceId, body, username) });
         if (action === 'retry') return json(200, await confirmsService.retry(sourceId, body));
@@ -332,7 +333,7 @@ if (require.main === module) {
     const projectTasksService = require('./project-tasks.cjs').createProjectTasksService();
     const telegramService = require('./telegram.cjs').createTelegramService();
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
-    const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService });
+    const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService, partnersService });
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,

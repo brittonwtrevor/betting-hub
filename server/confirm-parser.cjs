@@ -30,21 +30,27 @@ function defaultFields(message, item = eligibleContexts(message)[0]) {
 function validateExtraction(result, message) {
   if (!result || !Array.isArray(result.bets) || result.bets.length > 20 || !Array.isArray(result.issues) || result.issues.some(issue => typeof issue !== 'string' || issue.length > 400)) throw safe('AI returned an unreadable extraction. Add the bet manually or retry.');
   const contexts = new Map(eligibleContexts(message).map(item => [item.betId, item.context]));
-  // A single shorthand parlay gives us the combined price and stake directly.
-  const parlay = result.bets.length === 1 && !message.hasMedia
-    ? message.text?.trim().match(/^(?<betId>[A-Z]{3}\d{3})[ \t]+(?<legs>[^\r\n]{1,292}?)[ \t]+parlay[ \t]+(?<odds>[+-]?\d{3,7})[ \t]+\$(?<risk>\d+(?:\.\d{1,2})?)$/i)?.groups
+  // The reply is authoritative even if AI drops "parlay" or splits its legs.
+  const parlay = !message.hasMedia
+    ? message.text?.trim().match(/^(?<betId>[A-Z]{3}\d{3})\s+(?<legs>[^\r\n]{1,292}?)\s+parlay\s+(?<odds>[+-]?\d{3,7})\s+\$(?<risk>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?)$/i)?.groups
     : undefined;
-  const bets = result.bets.map(item => {
+  const matchesParlay = parlay && contexts.has(parlay.betId.toUpperCase());
+  const parlayTeam = matchesParlay && result.bets.find(item => item.betId === parlay.betId.toUpperCase() && item.team)?.team;
+  const items = matchesParlay ? [{ ...defaultFields(message, { betId: parlay.betId.toUpperCase(), context: contexts.get(parlay.betId.toUpperCase()) }),
+    ...(parlayTeam ? { team: parlayTeam } : {}),
+    bet: `Parlay: ${parlay.legs.trim()}`, risk: parlay.risk.replace(/,/g, ''), odds: parlay.odds }] : result.bets;
+  if (!matchesParlay && /\bparlay\b/i.test(message.text || '') && !message.hasMedia && result.bets.some(item => !/\bparlay\b/i.test(item.bet || ''))) {
+    throw safe('The reply mentions a parlay, but AI did not preserve its legs. Review the original message and enter the wager manually.');
+  }
+  const bets = items.map(item => {
     const context = contexts.get(item.betId);
     if (!context) throw safe('AI returned a Bet ID outside this partner reply. Review the message manually.');
     const teams = [context.game.team_a, context.game.team_b, 'Match'];
     if (item.team != null && !teams.includes(item.team)) throw safe('AI could not reliably match the team. Review the message manually.');
-    const matchesParlay = parlay?.betId.toUpperCase() === item.betId && typeof item.bet === 'string' && /\bparlay\b/i.test(item.bet);
-    const bet = matchesParlay ? `Parlay: ${parlay.legs.trim()}` : item.bet;
     try {
       return normalizeFields({ betId: item.betId, game: `${context.game.team_a} vs ${context.game.team_b}`,
-        team: item.team || '', bet: bet || '', risk: matchesParlay ? parlay.risk : item.risk,
-        odds: matchesParlay ? parlay.odds : item.odds, grade: 'UNGRADED' });
+        team: item.team || '', bet: item.bet || '', risk: item.risk,
+        odds: item.odds, grade: 'UNGRADED' });
     } catch { throw safe('AI returned invalid odds or risk. Review the message manually.'); }
   });
   return { bets, issues: result.issues };

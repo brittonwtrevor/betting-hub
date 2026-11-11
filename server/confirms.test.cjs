@@ -26,6 +26,7 @@ function fixture(options = {}) {
     if (sql.startsWith('SHOW COLUMNS')) return [Object.keys(columns).map(Field => ({ Field }))];
     if (sql.startsWith('SHOW INDEX')) return [[{ Key_name: 'partner_bet_dates' }, { Key_name: 'sender_bet_dates' }]];
     if (sql.startsWith('SELECT b.id')) return [[]];
+    if (sql.startsWith('UPDATE hub_confirm_bets b JOIN')) return [{ affectedRows: 0 }];
     if (sql.startsWith('INSERT INTO hub_confirm_sources')) {
       const [id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at] = p;
       data.sources[id] ||= { id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at, revision: 1, status: 'pending', attempts: 0, retry_at_ms: 0, lease_until_ms: 0 };
@@ -44,7 +45,8 @@ function fixture(options = {}) {
         return [{ id: row.id, bet_id: bet.betId, partner_id: bet.partnerId, partner_name: bet.partnerName,
           bet_date: bet.betDate, bet_at: bet.betAt, game: bet.game, team: bet.team, bet: bet.bet, sport: bet.sport,
           risk: bet.risk?.toFixed(2) ?? null, odds: bet.odds, grade: bet.grade, league: bet.league,
-          partial_return: bet.partialReturn?.toFixed(2) ?? null, pl: bet.pl?.toFixed(2) ?? null, graded_at: bet.gradedAt }];
+          partial_return: bet.partialReturn?.toFixed(2) ?? null, pl: bet.pl?.toFixed(2) ?? null, graded_at: bet.gradedAt,
+          raw_response: bet.rawResponse, split_bps: bet.splitBps, revision: row.revision }];
       })];
     }
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')) return [Object.values(data.bets).filter(row => p.includes(row.source_id)).map(copy)];
@@ -97,7 +99,7 @@ function fixture(options = {}) {
     return { ...validateExtraction(options.extraction || extraction, message), model: 'test-cheap-model', usage: { inputTokens: 500, outputTokens: 100 } };
   } };
   const makeService = () => createConfirmsService({ env: { LOL_DO_DB_HOST: 'test', LOL_DO_DB_USER: 'test', LOL_DO_DB_PASSWORD: 'test', LOL_DO_DB_NAME: 'test' },
-    telegramReceiver, parser, createPool: () => pool, now: () => time, makeId: () => `bet-${++nextId}`, logger: { error() {} },
+    telegramReceiver, parser, partnersService: options.partnersService, createPool: () => pool, now: () => time, makeId: () => `bet-${++nextId}`, logger: { error() {} },
     sendsService: { async findByBetIds(ids) { return ids.filter(id => ['HAN187', 'BOS145'].includes(id)).map(betId => ({ betId })); } },
   });
   return { service: makeService(), makeService, get data() { return data; }, get parseCalls() { return parseCalls; }, trace,
@@ -148,11 +150,12 @@ test('attribution edits persist in the same row while source identity remains se
   const initial = (await f.service.list()).sources[0].bets[0];
   f.setTime('2026-11-05T18:20:00.000Z');
   const edited = await f.service.update(initial.id, { ...initial, bettorName: 'Luke', betDate: '2026-11-03',
-    partnerId: 'forged', telegramSenderId: 'forged', grade: 'WIN' });
+    partnerId: 'forged', telegramSenderId: 'forged', rawResponse: 'forged', grade: 'WIN' });
   assert.equal(Object.keys(f.data.bets).length, 1);
   assert.equal(edited.bettorName, 'Luke');
   assert.equal(edited.partnerId, 'trevor');
   assert.equal(edited.telegramSenderId, '12345');
+  assert.equal(edited.rawResponse, original.text);
   assert.equal(edited.betDate, '2026-11-03');
   assert.equal(edited.gradedAt, '2026-11-05T18:20:00.000Z');
   f.setTime('2026-11-06T18:20:00.000Z');
@@ -262,6 +265,7 @@ test('a Telegram edit flags review without overwriting parsed bets, user correct
   assert.match(source.issues[0], /edited/);
   assert.equal(source.bets[0].risk, 500);
   assert.equal(source.bets[0].pl, 454.55);
+  assert.equal(source.bets[0].rawResponse, original.text);
   assert.equal(source.message.updateId, 43);
   assert.equal(f.parseCalls, 1);
   await assert.rejects(f.service.retry(source.id, { revision: source.revision }), /will not replace/);
@@ -345,6 +349,7 @@ test('partner reports read complete fills, reflect grades and omit deleted bets'
   assert.equal(raw.length, 3);
   assert.equal(raw[0].sport, 'lol');
   assert.equal(raw[0].league, 'Worlds');
+  assert.equal(raw[0].rawResponse, original.text);
   assert.equal(raw[2].stake, null);
   const [first, second] = (await f.service.list()).sources[0].bets;
   const win = await f.service.update(second.id, { ...second, grade: 'WIN' });
@@ -354,4 +359,34 @@ test('partner reports read complete fills, reflect grades and omit deleted bets'
   assert.deepEqual((await f.service.listReportBets()).map(bet => bet.id), [first.id]);
   assert.ok((await f.service.listReportBets({ includeIncomplete: true })).every(bet => bet.id !== win.id));
   assert.equal(f.parseCalls, 1);
+});
+
+test('split is saved at logging and a report edit changes only that bet’s share', async () => {
+  let splitBps = 5000;
+  const f = fixture({
+    partnersService: { async findSplitBps(id) { assert.equal(id, 'trevor'); return splitBps; } },
+    extraction: { bets: [{ ...extraction.bets[0], risk: 1000, odds: 100 }], issues: [] },
+  });
+  await f.service.tick();
+  const [first] = (await f.service.list()).sources[0].bets;
+  splitBps = 2500;
+  f.setMessages([{ ...original, messageId: 11, updateId: 43 }]);
+  await f.service.tick();
+  const [pending, later] = await f.service.listReportBets();
+  assert.deepEqual([pending.splitPercent, pending.stake, pending.yourRisk, later.splitPercent, later.yourRisk], [50, 1000, 500, 25, 250]);
+  const win = await f.service.update(first.id, { ...first, grade: 'WIN', splitBps: 0 });
+  assert.equal(win.splitBps, 5000);
+  const receipts = Object.keys(f.data.receipts).length;
+  const edited = await f.service.updateSplit(first.id, { revision: win.revision, splitPercent: 12.5, risk: 1, grade: 'LOSS' }, 'tester');
+  assert.deepEqual([edited.splitPercent, edited.yourRisk, edited.yourShare], [12.5, 125, 125]);
+  assert.equal(Object.keys(f.data.receipts).length, receipts);
+  assert.equal(f.data.audit.at(-1)[2], 'split_edit');
+  const [reported] = await f.makeService().listReportBets();
+  assert.deepEqual([reported.stake, reported.settledProfit, reported.status, reported.splitPercent], [1000, 1000, 'WIN', 12.5]);
+  await assert.rejects(f.service.updateSplit(first.id, { revision: win.revision, splitPercent: 50 }), { status: 409 });
+  await assert.rejects(f.service.updateSplit(first.id, { revision: edited.revision, splitPercent: 101 }), { status: 400 });
+  const loss = await f.service.update(first.id, { ...win, revision: edited.revision, grade: 'LOSS', risk: 1000.04 });
+  assert.equal((await f.service.listReportBets())[0].yourShare, -125.01);
+  await f.service.update(first.id, { ...loss, grade: 'PARTRETURN', partialReturn: 70.04 });
+  assert.equal((await f.service.listReportBets())[0].yourShare, 8.76);
 });

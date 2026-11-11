@@ -1,6 +1,7 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
 const { normalizeFields } = require('../src/features/bets/confirmationFields');
+const { fullSplitBps, splitError, splitToBps, splitAmount } = require('../src/features/partners/split');
 const { createConfirmParser, eligibleContexts, partnerFor, defaultFields } = require('./confirm-parser.cjs');
 const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
 const { createConfirmNotifications } = require('./confirm-notifications.cjs');
@@ -8,7 +9,11 @@ const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, confirmSafe: true });
 const sourceId = message => createHash('sha256').update(JSON.stringify([String(message.botId), String(message.chatId), String(message.messageId)])).digest('hex');
 
-function createConfirmsService({ env = process.env, telegramReceiver, sendsService, telegramService,
+function reportSplit(bps, risk, profit) {
+  return { splitPercent: bps / 100, yourRisk: splitAmount(risk, bps), yourShare: splitAmount(profit, bps) };
+}
+
+function createConfirmsService({ env = process.env, telegramReceiver, sendsService, telegramService, partnersService,
   parser = createConfirmParser({ env, readImages: message => telegramReceiver.readImages(message) }),
   createPool, now = () => new Date(), makeId = randomUUID, logger = console } = {}) {
   let pool, schema, timer, pending, notificationTimer, notificationPending;
@@ -87,6 +92,11 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
     const at = now().toISOString();
     const [[origin]] = await connection.execute('SELECT * FROM hub_confirm_sources WHERE id = ? FOR UPDATE', [source]);
     fields = { ...fields, ...recordMetadata(decode(origin.payload), fields, at) };
+    try {
+      fields.splitBps = await partnersService?.findSplitBps(fields.partnerId) ?? fullSplitBps;
+    } catch {
+      throw Object.assign(fail('Could not load the partner split. The reply will retry.', 503), { retryable: true });
+    }
     await connection.execute('INSERT INTO hub_confirm_bets (id, source_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
       [id, source, JSON.stringify(fields), at, at]);
     await history(connection, source, id, actor === 'AI' ? 'ai_extract' : 'manual_add', null, fields, actor);
@@ -176,18 +186,23 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
     async listReportBets({ includeIncomplete = false } = {}) {
       const db = await database();
       const [rows] = await db.query(`SELECT id, bet_id, partner_id, partner_name, bet_date, bet_at,
-        game, team, bet, sport, league, risk, odds, grade, partial_return, pl, graded_at
+        game, team, bet, sport, league, risk, odds, grade, partial_return, pl, graded_at, raw_response, revision, split_bps
         FROM hub_confirm_bets
         WHERE deleted_at IS NULL${includeIncomplete ? '' : ` AND risk IS NOT NULL AND odds IS NOT NULL
           AND game <> '' AND team <> '' AND bet <> ''`}
         ORDER BY bet_date DESC, bet_at DESC, id`);
-      return rows.map(row => ({
-        id: row.id, betId: row.bet_id, partnerId: row.partner_id, partnerName: row.partner_name,
-        betDate: row.bet_date, placedAt: row.bet_at, event: row.game, selection: row.bet, team: row.team,
-        sport: row.sport, league: row.league, stake: row.risk === null ? null : Number(row.risk), odds: row.odds,
-        status: row.grade, partialReturn: row.partial_return === null ? null : Number(row.partial_return),
-        settledProfit: row.pl === null ? null : Number(row.pl), gradedAt: row.graded_at,
-      }));
+      return rows.map(row => {
+        const stake = row.risk === null ? null : Number(row.risk);
+        const settledProfit = row.pl === null ? null : Number(row.pl);
+        return {
+          id: row.id, revision: row.revision, betId: row.bet_id, partnerId: row.partner_id, partnerName: row.partner_name,
+          betDate: row.bet_date, placedAt: row.bet_at, event: row.game, selection: row.bet, team: row.team,
+          sport: row.sport, league: row.league, stake, odds: row.odds,
+          status: row.grade, partialReturn: row.partial_return === null ? null : Number(row.partial_return),
+          settledProfit, gradedAt: row.graded_at, rawResponse: row.raw_response || '',
+          ...reportSplit(row.split_bps ?? fullSplitBps, stake, settledProfit),
+        };
+      });
     },
     async list() {
       const receiver = await sync();
@@ -251,6 +266,24 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         await history(connection, row.source_id, id, before.grade !== fields.grade || before.pl !== fields.pl ? 'grade' : 'edit', before, fields, actor);
         if (regraded) await notifications.enqueue(connection, row.source_id, id, row.revision + 1, 'grade', fields);
         return { id, sourceId: row.source_id, revision: row.revision + 1, createdAt: row.created_at, updatedAt: at, ...fields };
+      });
+    },
+    async updateSplit(id, input, actor = 'app') {
+      if (!Number.isInteger(input?.revision)) throw fail('Refresh the bet report before saving.');
+      const splitBps = splitToBps(input.splitPercent);
+      if (splitBps === null) throw fail(splitError);
+      return transaction(async connection => {
+        const [[row]] = await connection.execute('SELECT * FROM hub_confirm_bets WHERE id = ? FOR UPDATE', [id]);
+        if (!row) throw fail('This bet no longer exists. Refresh the bet report.', 404);
+        const before = decode(row.payload);
+        if (before.deletedAt || row.revision !== input.revision) throw fail('This bet changed. Refresh the bet report before saving.', 409);
+        const share = reportSplit(splitBps, before.risk, before.pl);
+        if (splitBps === (before.splitBps ?? fullSplitBps)) return { id, revision: row.revision, ...share };
+        const after = { ...before, splitBps };
+        await connection.execute('UPDATE hub_confirm_bets SET payload = ?, revision = revision + 1, updated_at = ? WHERE id = ?',
+          [JSON.stringify(after), now().toISOString(), id]);
+        await history(connection, row.source_id, id, 'split_edit', before, after, actor);
+        return { id, revision: row.revision + 1, ...share };
       });
     },
     async remove(id, input, actor = 'app') {

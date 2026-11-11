@@ -84,6 +84,24 @@ test('keeps every named parlay leg in one Bet description and the combined price
   assert.equal(detailedBet.odds, -125);
 });
 
+test('raw parlay reply overrides a straight handicap or separately extracted legs and keeps the combined stake and odds', () => {
+  const reply = { ...message, text: 'HAR561 Harvard +2.5 and Chiefs ML parlay +300 $2,500.00', betIds: ['HAR561'],
+    contexts: [{ betId: 'HAR561', context: { ...context, game: { team_a: 'Boston Univ.', team_b: 'Harvard Univ.' },
+      markets: [{ id: 'b:spread', label: 'Harvard +2.5' }, { id: 'b:ml', label: 'Harvard ML' }] } }] };
+  const handicap = { betId: 'HAR561', team: 'Harvard Univ.', bet: 'Handicap +2.5', risk: 2500, odds: 300 };
+  for (const bets of [[handicap], [handicap, { ...handicap, bet: 'Chiefs Moneyline', risk: 2, odds: -110 }], []]) {
+    const result = validateExtraction({ bets, issues: [] }, reply);
+    assert.equal(result.bets.length, 1);
+    assert.equal(result.bets[0].bet, 'Parlay: Harvard +2.5 and Chiefs ML');
+    assert.equal(result.bets[0].team, 'Harvard Univ.');
+    assert.equal(result.bets[0].risk, 2500);
+    assert.equal(result.bets[0].odds, 300);
+    assert.equal(result.bets[0].complete, true);
+  }
+  assert.throws(() => validateExtraction({ bets: [handicap], issues: [] }, { ...reply,
+    text: 'HAR561 $2500 at +300 parlay Harvard +2.5 and Chiefs ML' }), /parlay.*manually/);
+});
+
 test('sends an image with a bet-ID-only caption as multimodal input, including prediction-market guidance', async () => {
   const image = 'data:image/png;base64,iVBORw0KGgo=';
   const photoMessage = { ...message, text: 'HAN187', hasMedia: true };

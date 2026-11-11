@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { EmptyState, Panel, SelectField } from '../../components/ui';
 import { usePartners } from '../partners/usePartners';
+import { downloadCsv } from '../../utils/downloadCsv';
 
 const pageSize = 50;
 const initialFilters = { from: '', through: '', partner: '', sport: '', league: '' };
@@ -8,36 +9,15 @@ const columns = [
   ['betId', 'Bet ID'], ['betDate', 'Bet date (ET)'], ['partnerName', 'Partner'],
   ['sport', 'Sport'], ['league', 'League'], ['event', 'Game'], ['team', 'Team'], ['selection', 'Bet'],
   ['stake', 'Risk'], ['odds', 'Odds'], ['status', 'Grade'], ['partialReturn', 'Partial return'], ['settledProfit', 'Net P/L'],
+  ['rawResponse', 'Raw response'],
 ];
-const exportColumns = [...columns, ['id', 'Bet row ID'], ['partnerId', 'Partner ID'], ['placedAt', 'Placed at (UTC)'], ['gradedAt', 'Graded at (UTC)']];
+const exportColumns = [...columns, ['splitPercent', 'Split (%)'], ['yourRisk', 'Your risk'], ['yourShare', 'Your P/L'],
+  ['id', 'Bet row ID'], ['partnerId', 'Partner ID'], ['placedAt', 'Placed at (UTC)'], ['gradedAt', 'Graded at (UTC)']];
 const sportNames = { lol: 'League of Legends', hockey: 'Hockey', nascar: 'NASCAR' };
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 
-function csvCell(value) {
-  if (value == null) return '';
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
-  const text = String(value);
-  // Keep Telegram-derived text from being interpreted as a spreadsheet formula.
-  const safe = /^\s*[=+@-]|^[\t\r\n]/.test(text) ? `'${text}` : text;
-  return `"${safe.replace(/"/g, '""')}"`;
-}
-
-function betDataCsv(bets) {
-  const header = exportColumns.map(([, label]) => csvCell(label)).join(',');
-  const rows = bets.map(bet => exportColumns.map(([key]) => csvCell(bet[key])).join(','));
-  return [header, ...rows].join('\r\n') + '\r\n';
-}
-
 function downloadBets(bets) {
-  const url = URL.createObjectURL(new Blob(['\uFEFF', betDataCsv(bets)], { type: 'text/csv;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'raw-bet-data.csv';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  const revoke = URL.revokeObjectURL.bind(URL);
-  setTimeout(() => revoke(url), 1000);
+  downloadCsv('raw-bet-data.csv', exportColumns.map(([, label]) => label), bets.map(bet => exportColumns.map(([key]) => bet[key])));
 }
 
 function display(key, value) {
@@ -114,7 +94,7 @@ export default function RawBetData() {
     <div className="table-scroll"><table className="data-table" aria-label="Raw bet data">
       <thead><tr>{columns.map(([key, label]) => <th key={key} scope="col">{label}</th>)}</tr></thead>
       <tbody>{filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(bet => <tr key={bet.id}>
-        {columns.map(([key]) => <td key={key}>{display(key, bet[key])}</td>)}
+        {columns.map(([key]) => <td key={key} className={key === 'rawResponse' ? 'bet-raw-response' : undefined}>{display(key, bet[key])}</td>)}
       </tr>)}
         {!filtered.length && !data.loading && !data.error && !invalidDates && <tr><td colSpan={columns.length}><EmptyState icon="inbox" title={bets.length ? 'No bets match these filters' : 'No confirmed bets yet'} /></td></tr>}
       </tbody>

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { migrateRecords, recordMetadata, columns } = require('./confirm-record.cjs');
 
 const message = { botId: '1', chatId: '-100123', messageId: 10, from: 'trevor', date: '2026-11-05T01:00:00.000Z',
-  receivedAt: '2026-11-05T01:01:00.000Z', contexts: [] };
+  receivedAt: '2026-11-05T01:01:00.000Z', text: 'BOS145 ML +300 $2,500.00\noriginal reply', contexts: [] };
 const source = { message, partner: { id: 'partner-1', name: 'Trevor' } };
 
 test('backfills existing bet attribution from the archived event without replacing financial fields', async () => {
@@ -32,7 +32,7 @@ test('backfills existing bet attribution from the archived event without replaci
   const alter = calls.find(([sql]) => sql.startsWith('ALTER'))[0];
   assert.match(alter, /partner_bet_dates/);
   assert.match(alter, /telegram_sender_id/);
-  const [sql, params] = calls.find(([sql]) => sql.startsWith('UPDATE'));
+  const [sql, params] = calls.find(([sql]) => sql.startsWith('UPDATE hub_confirm_bets SET'));
   assert.match(sql, /JSON_MERGE_PATCH\(payload, \?\)/);
   assert.match(sql, /recordVersion.*IS NULL/s);
   const metadata = JSON.parse(params[0]);
@@ -41,6 +41,7 @@ test('backfills existing bet attribution from the archived event without replaci
   assert.equal(metadata.partnerId, 'partner-1');
   assert.equal(metadata.betDate, '2026-11-04');
   assert.equal(metadata.gradedAt, '2026-11-05T02:00:00.000Z');
+  assert.equal(metadata.rawResponse, message.text);
   for (const field of ['risk', 'odds', 'pl', 'grade', 'bet', 'team']) assert.equal(Object.hasOwn(metadata, field), false);
 });
 
@@ -67,4 +68,22 @@ test('anonymous/channel messages do not invent a human sender identity', () => {
   assert.equal(metadata.telegramSenderName, '');
   assert.equal(metadata.bettorName, 'Trevor');
   assert.equal(metadata.gradedAt, null);
+});
+
+test('backfills raw responses for existing records without replacing saved snapshots or bet details', async () => {
+  const calls = [];
+  const db = {
+    async execute(sql) { return [[{ acquired: 1 }]]; },
+    async query(sql) {
+      calls.push(sql);
+      if (sql.startsWith('SHOW COLUMNS')) return [Object.keys(columns).map(Field => ({ Field }))];
+      if (sql.startsWith('SHOW INDEX')) return [[{ Key_name: 'partner_bet_dates' }, { Key_name: 'sender_bet_dates' }]];
+      return [[]];
+    }, release() {},
+  };
+  await migrateRecords({ async getConnection() { return db; } });
+  const backfill = calls.find(sql => sql.startsWith('UPDATE hub_confirm_bets b JOIN'));
+  assert.match(backfill, /JSON_SET\(b.payload, '\$\.rawResponse'/);
+  assert.match(backfill, /WHERE JSON_EXTRACT\(b.payload, '\$\.rawResponse'\) IS NULL/);
+  assert.doesNotMatch(backfill, /revision|updated_at|notifications/);
 });
