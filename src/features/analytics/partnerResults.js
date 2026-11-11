@@ -1,4 +1,5 @@
 import { calculatePL, grades } from '../bets/confirmationFields';
+import { fullSplitBps, splitAmount, splitToBps } from '../partners/split';
 
 const easternDate = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -52,6 +53,7 @@ export function reportBets(bets, partners, basis) {
       ...bet,
       partnerId: partner?.id || bet.partnerId || '',
       partnerName: partner?.name || bet.partnerName || 'Unknown partner',
+      splitBps: splitToBps(partner?.splitPercent) ?? splitToBps(bet.splitPercent) ?? fullSplitBps,
       sport: bet.sport || '',
       league: bet.league || '',
       reportDate: open || basis === 'placed' ? placedOn : dateInEastern(bet.gradedAt),
@@ -68,28 +70,27 @@ export function summarize(bets) {
   let potentialCents = 0;
   let missingProfit = 0;
   for (const bet of bets) {
-    const stakeCents = Math.round(bet.stake * 100);
+    const stakeCents = Math.round(splitAmount(bet.stake, bet.splitBps) * 100);
     riskCents += stakeCents;
     if (bet.open) {
-      const toWin = calculatePL({ grade: 'WIN', risk: bet.stake, odds: bet.odds });
+      const toWin = splitAmount(calculatePL({ grade: 'WIN', risk: bet.stake, odds: bet.odds }), bet.splitBps);
       if (Number.isFinite(toWin)) potentialCents += Math.round(toWin * 100);
       else missingProfit++;
       continue;
     }
     outcomes[bet.status]++;
     if (bet.status !== 'VOID') roiRiskCents += stakeCents;
-    const profit = bet.settledProfit ?? calculatePL({
+    const reportedProfit = bet.settledProfit ?? calculatePL({
       grade: bet.status, risk: bet.stake, odds: bet.odds, partialReturn: bet.partialReturn,
     });
+    const profit = splitAmount(reportedProfit, bet.splitBps);
     if (Number.isFinite(profit)) netCents += Math.round(profit * 100);
     else missingProfit++;
   }
-  const decisions = outcomes.WIN + outcomes.LOSS;
   return {
     count: bets.length, risk: riskCents / 100, outcomes,
     profit: missingProfit ? null : netCents / 100,
     potential: missingProfit ? null : potentialCents / 100,
     roi: roiRiskCents && !missingProfit ? netCents / roiRiskCents : null,
-    winRate: decisions ? outcomes.WIN / decisions : null,
   };
 }

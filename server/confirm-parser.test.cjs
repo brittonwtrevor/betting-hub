@@ -41,6 +41,20 @@ test('supports multiple fills and leaves ambiguous values blank for review', () 
   assert.equal(validateExtraction({ ...extracted, bets: [{ ...extracted.bets[0], grade: 'WIN', pl: 100000 }] }, message).bets[0].pl, null);
 });
 
+test('assigns Total Goals to hockey game totals and keeps the team on team totals', () => {
+  const hockey = { ...message, text: 'TEX137 Total goals o5.5 $960 -120', betIds: ['TEX137'],
+    contexts: [{ betId: 'TEX137', context: { ...context, game: { sport: 'hockey', team_a: 'Texas Stars', team_b: 'Manitoba Moose' } } }] };
+  const fill = { betId: 'TEX137', risk: 960, odds: -120 };
+  const { bets } = validateExtraction({ bets: [
+    { ...fill, team: null, bet: 'Total goals over 5.5' },
+    { ...fill, team: 'Texas Stars', bet: 'u6.5' },
+    { ...fill, team: 'Total Goals', bet: 'Game total under 6.5' },
+    { ...fill, team: 'Texas Stars', bet: 'Team total goals over 2.5' },
+  ], issues: [] }, hockey);
+  assert.deepEqual(bets.map(bet => bet.team), ['Total Goals', 'Total Goals', 'Total Goals', 'Texas Stars']);
+  assert.ok(bets.every(bet => bet.complete));
+});
+
 test('accepts positive odds in a multi-bet Telegram reply even if the model omits JSON quotes', async () => {
   const harvard = { ...message, text: 'HAR561 Harvard +2.5 $670 -134 Harvard ML $500 +366', betIds: ['HAR561'],
     contexts: [{ betId: 'HAR561', context: { ...context, game: { team_a: 'Boston Univ.', team_b: 'Harvard Univ.' },

@@ -41,7 +41,7 @@ function fixture(options = {}) {
       const completeOnly = sql.includes('risk IS NOT NULL');
       return [Object.values(data.bets).flatMap(row => {
         const bet = JSON.parse(row.payload);
-        if (bet.deletedAt || (completeOnly && !bet.complete)) return [];
+        if (bet.deletedAt || (completeOnly && (bet.risk == null || bet.odds == null || !bet.game || !bet.bet))) return [];
         return [{ id: row.id, bet_id: bet.betId, partner_id: bet.partnerId, partner_name: bet.partnerName,
           bet_date: bet.betDate, bet_at: bet.betAt, game: bet.game, team: bet.team, bet: bet.bet, sport: bet.sport,
           risk: bet.risk?.toFixed(2) ?? null, odds: bet.odds, grade: bet.grade, league: bet.league,
@@ -144,6 +144,24 @@ test('returns the full reply archive and classifies pending replies by their lin
   assert.deepEqual(sources[101].sports, ['lol']);
   assert.equal(sources[101].status, 'pending');
   assert.equal(f.trace.filter(sql => sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')).length, 2);
+});
+
+test('existing game totals with blank teams appear in Confirms and reports and can be graded', async () => {
+  const f = fixture();
+  await f.service.tick();
+  const [stored] = Object.values(f.data.bets);
+  stored.payload = JSON.stringify({ ...JSON.parse(stored.payload), sport: 'hockey', team: '', bet: 'Over 5.5', complete: false });
+
+  const { sources: [{ bets: [bet] }] } = await f.service.list();
+  assert.equal(bet.team, 'Total Goals');
+  assert.equal(bet.complete, true);
+  assert.equal((await f.service.listReportBets())[0].team, 'Total Goals');
+  assert.equal(JSON.parse(stored.payload).team, '');
+
+  const graded = await f.service.update(bet.id, { ...bet, team: '', grade: 'WIN' });
+  assert.equal(graded.team, 'Total Goals');
+  assert.equal(graded.bet, 'Over 5.5');
+  assert.equal(JSON.parse(stored.payload).team, 'Total Goals');
 });
 
 test('attribution edits persist in the same row while source identity remains server controlled', async () => {

@@ -1,4 +1,12 @@
 const grades = ['UNGRADED', 'VOID', 'WIN', 'LOSS', 'PARTRETURN'];
+const totalGoalsTeam = 'Total Goals';
+function confirmationTeam(team, bet, sport) {
+  const market = bet?.trim() || '';
+  const goalTotal = /^(?:(?:game|match)\s+)?(?:total goals|goals? totals?)(?=\s|:|$)/i.test(market);
+  const hockeyTotal = sport === 'hockey' && /^(?:(?:(?:game|match)\s+)?total\s*:?\s*)?(?:over|under|[ou])\s*\d+(?:\.\d+)?(?:\s+goals)?(?:\s+\([^)]*\))?$/i.test(market);
+  return goalTotal || hockeyTotal ? totalGoalsTeam : team;
+}
+
 const invalid = message => Object.assign(new Error(message), { status: 400, confirmSafe: true });
 function amount(value, signed = false) {
   if (value == null || value === '') return null;
@@ -6,7 +14,7 @@ function amount(value, signed = false) {
   if (!pattern.test(String(value)) || !Number.isFinite(Number(value)) || Math.abs(Number(value)) > 10000000) throw invalid('Enter a dollar amount with at most two decimal places (maximum $10,000,000).');
   return Math.round(Number(value) * 100) / 100;
 }
-function normalizeFields(input) {
+function normalizeFields(input, sport) {
   if (!input || typeof input !== 'object') throw invalid('Enter the bet details.');
   const result = {};
   for (const [key, max] of [['betId', 6], ['game', 400], ['team', 200], ['bet', 300]]) {
@@ -15,6 +23,7 @@ function normalizeFields(input) {
   }
   result.betId = result.betId.toUpperCase();
   if (!/^[A-Z]{3}\d{3}$/.test(result.betId)) throw invalid('Enter a six-character Bet ID such as HAN187.');
+  result.team = confirmationTeam(result.team, result.bet, sport);
   result.risk = amount(input.risk);
   if (result.risk !== null && result.risk <= 0) throw invalid('Risk must be greater than zero.');
   result.odds = input.odds == null || input.odds === '' ? null : Number(input.odds);
@@ -38,4 +47,4 @@ function calculatePL({ grade, risk, odds, partialReturn }) {
   if (odds == null || odds === '' || !Number.isFinite(Number(odds)) || Math.abs(Number(odds)) < 100) return null;
   return Math.round(Number(odds) > 0 ? cents * Number(odds) / 100 : cents * 100 / Math.abs(Number(odds))) / 100;
 }
-module.exports = { grades, normalizeFields, calculatePL };
+module.exports = { grades, normalizeFields, calculatePL, confirmationTeam, totalGoalsTeam };

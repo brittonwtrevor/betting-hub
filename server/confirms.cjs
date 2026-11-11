@@ -1,6 +1,6 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
-const { normalizeFields } = require('../src/features/bets/confirmationFields');
+const { confirmationTeam, normalizeFields } = require('../src/features/bets/confirmationFields');
 const { fullSplitBps, splitToBps, splitAmount } = require('../src/features/partners/split');
 const { createConfirmParser, eligibleContexts, partnerFor, defaultFields } = require('./confirm-parser.cjs');
 const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
@@ -186,7 +186,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.message.chatUsername')) AS chat_username
         FROM hub_confirm_bets b LEFT JOIN hub_confirm_sources s ON s.id = b.source_id
         WHERE deleted_at IS NULL${includeIncomplete ? '' : ` AND risk IS NOT NULL AND odds IS NOT NULL
-          AND game <> '' AND team <> '' AND bet <> ''`}
+          AND game <> '' AND bet <> ''`}
         ORDER BY bet_date DESC, bet_at DESC, b.id`), partnersService?.list() ?? []]);
       const byId = new Map();
       const byChannel = new Map();
@@ -214,13 +214,13 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
         const partner = resolve(row);
         return {
           id: row.id, betId: row.bet_id, partnerId: partner?.id ?? row.partner_id, partnerName: partner?.name ?? row.partner_name,
-          betDate: row.bet_date, placedAt: row.bet_at, event: row.game, selection: row.bet, team: row.team,
+          betDate: row.bet_date, placedAt: row.bet_at, event: row.game, selection: row.bet, team: confirmationTeam(row.team, row.bet, row.sport),
           sport: row.sport, league: row.league, stake, odds: row.odds,
           status: row.grade, partialReturn: row.partial_return === null ? null : Number(row.partial_return),
           settledProfit, gradedAt: row.graded_at, rawResponse: row.raw_response || '',
           ...reportSplit(splitToBps(partner?.splitPercent) ?? fullSplitBps, stake, settledProfit),
         };
-      });
+      }).filter(bet => includeIncomplete || bet.team);
     },
     async list() {
       const receiver = await sync();
@@ -237,7 +237,13 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
           WHERE source_id IN (${placeholders}) ORDER BY created_at, bet_revision, id`, ids);
         for (const row of batch) {
           const payload = decode(row.payload);
-          const savedBets = bets.filter(bet => bet.source_id === row.id).map(bet => ({ ...bet, fields: decode(bet.payload) }));
+          const savedBets = bets.filter(bet => bet.source_id === row.id).map(bet => {
+            const fields = decode(bet.payload);
+            const team = confirmationTeam(fields.team, fields.bet, fields.sport);
+            const complete = fields.complete || !!(team && team !== fields.team && fields.game && fields.bet
+              && fields.risk != null && fields.odds != null);
+            return { ...bet, fields: { ...fields, team, complete } };
+          });
           const byBet = new Map(savedBets.map(bet => [bet.id, bet.fields]));
           const contexts = eligibleContexts(payload.message);
           const sports = [...new Set(contexts.map(item => item.context.game.sport).filter(Boolean))];
@@ -256,15 +262,16 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
     },
     async update(id, input, actor = 'app') {
       if (!Number.isInteger(input?.revision)) throw fail('Refresh Confirms before saving.');
-      let fields = normalizeFields(input);
-      const [send] = await sendsService.findByBetIds([fields.betId]);
-      if (!send) throw fail('This Bet ID does not exist in Sends.');
       return transaction(async connection => {
         const [[row]] = await connection.execute('SELECT * FROM hub_confirm_bets WHERE id = ? FOR UPDATE', [id]);
         if (!row) throw fail('This bet no longer exists. Refresh Confirms.', 404);
         if (row.revision !== input.revision) throw fail('This bet changed on another screen. Refresh Confirms before saving.', 409);
         const before = decode(row.payload);
         if (before.deletedAt) throw fail('This bet was deleted. Refresh Confirms.', 409);
+        const betId = typeof input.betId === 'string' ? input.betId.trim().toUpperCase() : '';
+        const [send] = await sendsService.findByBetIds([betId]);
+        let fields = normalizeFields(input, send?.context?.game?.sport ?? before.sport);
+        if (!send) throw fail('This Bet ID does not exist in Sends.');
         const at = now().toISOString();
         const [[source]] = await connection.execute('SELECT * FROM hub_confirm_sources WHERE id = ?', [row.source_id]);
         const metadata = recordMetadata(decode(source.payload), fields, at);

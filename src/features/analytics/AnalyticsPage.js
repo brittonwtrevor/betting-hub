@@ -43,11 +43,15 @@ function Breakdown({ bets, group, open }) {
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(bet);
   }
-  const rows = Array.from(buckets, ([key, records]) => ({ key, label: group.name(records[0]), ...summarize(records) }));
+  const rows = Array.from(buckets, ([key, records]) => {
+    const splits = new Set(records.map(bet => bet.splitBps));
+    const split = splits.size === 1 ? `${records[0].splitBps / 100}%` : 'Mixed';
+    return { key, label: group.name(records[0]), split, ...summarize(records) };
+  });
   rows.sort((a, b) => group.value === 'reportDate'
     ? (b.key || '').localeCompare(a.key || '') : a.label.localeCompare(b.label));
   const columns = open ? ['Bets', 'Open risk', 'Potential profit']
-    : ['Bets', 'Graded risk', 'Wins', 'Losses', 'Voids', 'Partial returns', 'Win rate', 'Net P/L', 'ROI'];
+    : ['Bets', 'Graded risk', 'Wins', 'Losses', 'Voids', 'Partial returns', 'Split (%)', 'Net P/L', 'ROI'];
   const label = `${open ? 'Unsettled' : 'Settled'} bets by ${group.label.toLowerCase()}`;
 
   return <div className="table-scroll">
@@ -61,7 +65,7 @@ function Breakdown({ bets, group, open }) {
           {open ? <td>{money(row.potential)}</td> : <>
             <td>{row.outcomes.WIN}</td><td>{row.outcomes.LOSS}</td>
             <td>{row.outcomes.VOID}</td><td>{row.outcomes.PARTRETURN}</td>
-            <td>{percent(row.winRate)}</td><td>{money(row.profit)}</td><td>{percent(row.roi)}</td>
+            <td>{row.split}</td><td>{money(row.profit)}</td><td>{percent(row.roi)}</td>
           </>}
         </tr>)}
         {!rows.length && <tr><td colSpan={columns.length + 1}>
@@ -122,14 +126,14 @@ export default function AnalyticsPage() {
   const group = groups.find(item => item.value === groupKey);
   const stats = open ? [
     { label: 'Unsettled bets', value: totals.count, note: 'Awaiting a grade', icon: 'layers' },
-    { label: 'Open risk', value: money(totals.risk), note: 'Total stake on unsettled bets', icon: 'wallet' },
-    { label: 'Potential profit', value: money(totals.potential), note: 'Combined profit if every open bet wins' },
+    { label: 'Open risk', value: money(totals.risk), note: 'Your share of unsettled stakes', icon: 'wallet' },
+    { label: 'Potential profit', value: money(totals.potential), note: 'Your share if every open bet wins' },
     { label: 'Average stake', value: money(totals.count ? totals.risk / totals.count : null), note: 'Open risk per bet', icon: 'activity' },
   ] : [
     { label: 'Settled bets', value: totals.count, note: `${totals.outcomes.WIN} wins · ${totals.outcomes.LOSS} losses · ${totals.outcomes.VOID} voids · ${totals.outcomes.PARTRETURN} partial returns`, icon: 'layers' },
-    { label: 'Graded risk', value: money(totals.risk), note: 'Total stake on graded bets', icon: 'wallet' },
-    { label: 'Net P/L', value: money(totals.profit), note: 'Includes signed partial returns' },
-    { label: 'ROI', value: percent(totals.roi), note: 'Net P/L divided by non-void stake', icon: 'activity' },
+    { label: 'Graded risk', value: money(totals.risk), note: 'Your share of graded stakes', icon: 'wallet' },
+    { label: 'Net P/L', value: money(totals.profit), note: 'Your share of settled profit and loss' },
+    { label: 'ROI', value: percent(totals.roi), note: 'Your net P/L divided by your non-void stake', icon: 'activity' },
   ];
 
   return <>
@@ -156,7 +160,7 @@ export default function AnalyticsPage() {
           </div>
           <Breakdown bets={filtered} group={group} open={open} />
         </Panel>
-        <InfoNote>Figures use the full confirmed stakes across partners.{!open && ' Win rate uses wins and losses only.'}</InfoNote>
+        <InfoNote>Dollar amounts use each partner’s global split. Bet counts include all matching bets.</InfoNote>
       </>}
   </>;
 }

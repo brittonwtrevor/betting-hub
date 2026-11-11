@@ -1,10 +1,15 @@
 const { createHash } = require('node:crypto');
+const { confirmationTeam, totalGoalsTeam } = require('../src/features/bets/confirmationFields');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const dollars = value => value == null ? 'Not provided' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
 function notificationText(kind, bet) {
   const odds = bet.odds == null ? 'Not provided' : bet.odds > 0 ? `+${bet.odds}` : bet.odds;
   const text = (value, fallback) => String(value || fallback).replace(/\s+/g, ' ').trim();
-  const description = `${text(bet.team, 'Team needing review')} ${text(bet.bet, 'market needing review')}, risking ${dollars(bet.risk)} at ${odds}`;
+  const team = confirmationTeam(bet.team, bet.bet, bet.sport);
+  const market = text(bet.bet, 'market needing review');
+  const selection = team === totalGoalsTeam && /^(?:total goals|goals? totals?)\b/i.test(market)
+    ? market : `${text(team, 'Team needing review')} ${market}`;
+  const description = `${selection}, risking ${dollars(bet.risk)} at ${odds}`;
   if (kind === 'delete') return `${description}, was deleted from the bet log. 🗑`;
   if (kind === 'grade') {
     if (bet.grade === 'UNGRADED') return `${description}, is now ungraded with net P/L pending.`;
