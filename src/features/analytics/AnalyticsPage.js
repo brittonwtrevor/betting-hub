@@ -22,6 +22,7 @@ const groups = [
   { value: 'sport', label: 'Sport', name: bet => sportName(bet.sport) },
   { value: 'league', label: 'League', name: bet => bet.league || 'Unknown league' },
   { value: 'reportDate', label: 'Date (ET)', name: bet => bet.reportDate || 'Unknown date' },
+  { value: 'betId', label: 'Bet ID', name: bet => bet.betId || 'No Bet ID' },
 ];
 
 function sportName(sport) {
@@ -37,29 +38,34 @@ function filterOptions(bets, key, name, allLabel) {
 }
 
 function Breakdown({ bets, group, open }) {
+  const byBetId = group.value === 'betId';
   const buckets = new Map();
   for (const bet of bets) {
-    const key = bet[group.value];
+    const key = bet[group.value] || '';
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key).push(bet);
   }
   const rows = Array.from(buckets, ([key, records]) => {
     const splits = new Set(records.map(bet => bet.splitBps));
     const split = splits.size === 1 ? `${records[0].splitBps / 100}%` : 'Mixed';
-    return { key, label: group.name(records[0]), split, ...summarize(records) };
+    const matchup = byBetId ? [...new Set(records.map(bet => bet.event).filter(Boolean))].join(' · ') : '';
+    return { key, label: group.name(records[0]), matchup, split, ...summarize(records) };
   });
   rows.sort((a, b) => group.value === 'reportDate'
-    ? (b.key || '').localeCompare(a.key || '') : a.label.localeCompare(b.label));
-  const columns = open ? ['Bets', 'Open risk', 'Potential profit']
-    : ['Bets', 'Graded risk', 'Wins', 'Losses', 'Voids', 'Partial returns', 'Split (%)', 'Net P/L', 'ROI'];
+    ? b.key.localeCompare(a.key) : a.label.localeCompare(b.label));
+  const columns = [group.label, ...(byBetId ? ['Matchup', 'Fills'] : ['Bets']), ...(open
+    ? ['Open risk', 'Potential profit']
+    : ['Graded risk', 'Wins', 'Losses', 'Voids', 'Partial returns', 'Split (%)', 'Net P/L', 'ROI'])];
   const label = `${open ? 'Unsettled' : 'Settled'} bets by ${group.label.toLowerCase()}`;
 
   return <div className="table-scroll">
     <table className="data-table analytics-breakdown" aria-label={label}>
-      <thead><tr>{[group.label, ...columns].map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
+      <thead><tr>{columns.map(column => <th key={column} scope="col"
+        className={column === 'Matchup' ? 'analytics-matchup' : undefined}>{column}</th>)}</tr></thead>
       <tbody>
-        {rows.map(row => <tr key={row.key ?? ''}>
+        {rows.map(row => <tr key={row.key}>
           <th scope="row">{row.label}</th>
+          {byBetId && <td className="analytics-matchup">{row.matchup || '—'}</td>}
           <td>{row.count}</td>
           <td>{money(row.risk)}</td>
           {open ? <td>{money(row.potential)}</td> : <>
@@ -68,7 +74,7 @@ function Breakdown({ bets, group, open }) {
             <td>{row.split}</td><td>{money(row.profit)}</td><td>{percent(row.roi)}</td>
           </>}
         </tr>)}
-        {!rows.length && <tr><td colSpan={columns.length + 1}>
+        {!rows.length && <tr><td colSpan={columns.length}>
           <EmptyState compact icon="database" title={`No ${open ? 'unsettled' : 'settled'} bets match these filters`}
             description="Change the filters to see other confirmed bets." />
         </td></tr>}
