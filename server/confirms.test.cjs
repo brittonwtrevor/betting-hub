@@ -25,7 +25,7 @@ function fixture(options = {}) {
     if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
     if (sql.startsWith('SHOW COLUMNS')) return [Object.keys(columns).map(Field => ({ Field }))];
     if (sql.startsWith('SHOW INDEX')) return [[{ Key_name: 'partner_bet_dates' }, { Key_name: 'sender_bet_dates' }]];
-    if (sql.startsWith('SELECT b.id')) return [[]];
+    if (sql.startsWith('SELECT b.id, b.payload')) return [[]];
     if (sql.startsWith('UPDATE hub_confirm_bets b JOIN')) return [{ affectedRows: 0 }];
     if (sql.startsWith('INSERT INTO hub_confirm_sources')) {
       const [id, bot_id, chat_id, message_id, update_id, payload, created_at, updated_at] = p;
@@ -36,7 +36,7 @@ function fixture(options = {}) {
       const rows = Object.values(data.sources);
       return [(sql.endsWith('LIMIT 100') ? rows.slice(0, 100) : rows).map(copy)];
     }
-    else if (sql.startsWith('SELECT id, bet_id, partner_id')) {
+    else if (sql.startsWith('SELECT b.id, bet_id, partner_id')) {
       assert.match(sql, /WHERE deleted_at IS NULL/);
       const completeOnly = sql.includes('risk IS NOT NULL');
       return [Object.values(data.bets).flatMap(row => {
@@ -46,7 +46,8 @@ function fixture(options = {}) {
           bet_date: bet.betDate, bet_at: bet.betAt, game: bet.game, team: bet.team, bet: bet.bet, sport: bet.sport,
           risk: bet.risk?.toFixed(2) ?? null, odds: bet.odds, grade: bet.grade, league: bet.league,
           partial_return: bet.partialReturn?.toFixed(2) ?? null, pl: bet.pl?.toFixed(2) ?? null, graded_at: bet.gradedAt,
-          raw_response: bet.rawResponse, split_bps: bet.splitBps, revision: row.revision }];
+          raw_response: bet.rawResponse, telegram_chat_id: bet.telegramChatId,
+          chat_username: JSON.parse(data.sources[row.source_id].payload).message.chatUsername }];
       })];
     }
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')) return [Object.values(data.bets).filter(row => p.includes(row.source_id)).map(copy)];
@@ -361,32 +362,61 @@ test('partner reports read complete fills, reflect grades and omit deleted bets'
   assert.equal(f.parseCalls, 1);
 });
 
-test('split is saved at logging and a report edit changes only that bet’s share', async () => {
-  let splitBps = 5000;
+test('partner report applies the current global split to pending and settled historical bets', async () => {
+  let splitPercent = 50;
   const f = fixture({
-    partnersService: { async findSplitBps(id) { assert.equal(id, 'trevor'); return splitBps; } },
+    partnersService: { async list() { return [{ id: 'current-partner', legacyIds: ['trevor'], splitPercent }]; } },
     extraction: { bets: [{ ...extraction.bets[0], risk: 1000, odds: 100 }], issues: [] },
   });
   await f.service.tick();
   const [first] = (await f.service.list()).sources[0].bets;
-  splitBps = 2500;
+  const win = await f.service.update(first.id, { ...first, grade: 'WIN' });
   f.setMessages([{ ...original, messageId: 11, updateId: 43 }]);
   await f.service.tick();
-  const [pending, later] = await f.service.listReportBets();
-  assert.deepEqual([pending.splitPercent, pending.stake, pending.yourRisk, later.splitPercent, later.yourRisk], [50, 1000, 500, 25, 250]);
-  const win = await f.service.update(first.id, { ...first, grade: 'WIN', splitBps: 0 });
-  assert.equal(win.splitBps, 5000);
-  const receipts = Object.keys(f.data.receipts).length;
-  const edited = await f.service.updateSplit(first.id, { revision: win.revision, splitPercent: 12.5, risk: 1, grade: 'LOSS' }, 'tester');
-  assert.deepEqual([edited.splitPercent, edited.yourRisk, edited.yourShare], [12.5, 125, 125]);
-  assert.equal(Object.keys(f.data.receipts).length, receipts);
-  assert.equal(f.data.audit.at(-1)[2], 'split_edit');
-  const [reported] = await f.makeService().listReportBets();
-  assert.deepEqual([reported.stake, reported.settledProfit, reported.status, reported.splitPercent], [1000, 1000, 'WIN', 12.5]);
-  await assert.rejects(f.service.updateSplit(first.id, { revision: win.revision, splitPercent: 50 }), { status: 409 });
-  await assert.rejects(f.service.updateSplit(first.id, { revision: edited.revision, splitPercent: 101 }), { status: 400 });
-  const loss = await f.service.update(first.id, { ...win, revision: edited.revision, grade: 'LOSS', risk: 1000.04 });
+  // Simulate an old per-bet override carried over from the previous release.
+  const saved = f.data.bets[first.id];
+  saved.payload = JSON.stringify({ ...JSON.parse(saved.payload), splitBps: 10000 });
+  const [settled, pending] = await f.service.listReportBets();
+  assert.deepEqual([settled.splitPercent, settled.stake, settled.settledProfit, settled.yourShare], [50, 1000, 1000, 500]);
+  assert.deepEqual([pending.splitPercent, pending.yourRisk, pending.yourShare], [50, 500, null]);
+  splitPercent = 12.5;
+  const updated = await f.makeService().listReportBets({ includeIncomplete: true });
+  assert.deepEqual(updated.map(bet => bet.splitPercent), [12.5, 12.5]);
+  assert.deepEqual(updated.map(bet => bet.yourRisk), [125, 125]);
+  assert.equal(updated[0].yourShare, 125);
+  assert.equal(saved.revision, win.revision);
+  const loss = await f.service.update(first.id, { ...win, grade: 'LOSS', risk: 1000.04 });
   assert.equal((await f.service.listReportBets())[0].yourShare, -125.01);
   await f.service.update(first.id, { ...loss, grade: 'PARTRETURN', partialReturn: 70.04 });
   assert.equal((await f.service.listReportBets())[0].yourShare, 8.76);
+  splitPercent = 0;
+  assert.ok((await f.service.listReportBets()).every(bet => bet.yourRisk === 0));
+});
+
+test('orphaned send IDs and Telegram fallback IDs use the saved partner’s chat identity in reports', async () => {
+  let registry = [{ id: 'kenny-current', name: 'kenny_partner', telegramChannel: '-5550868176', splitPercent: 50 }];
+  const f = fixture({ partnersService: { async list() { return registry; } } });
+  const first = { ...original, chat: 'kenny_partner', chatUsername: 'Kenny_Partner' };
+  const second = { ...first, updateId: 43, messageId: 11, contexts: [{ betId: 'HAN187',
+    context: { ...context, recipients: [], deliveries: [{ chatId: first.chatId }] } }] };
+  const unrelated = { ...original, updateId: 44, messageId: 12, chatId: '-5550000000', chat: 'kenny_partner',
+    contexts: [{ betId: 'HAN187', context: { ...context, recipients: [], deliveries: [{ chatId: '-5550000000' }] } }] };
+  f.setMessages([first, second, unrelated]);
+  await f.service.tick();
+  const [older, fallback, other] = await f.service.listReportBets();
+  for (const bet of [older, fallback]) {
+    assert.equal(bet.partnerId, 'kenny-current');
+    assert.equal(bet.partnerName, 'kenny_partner');
+    assert.equal(bet.yourRisk, 0.50);
+  }
+  assert.equal(other.partnerId, 'telegram:-5550000000');
+  assert.equal(other.yourRisk, 1);
+  assert.equal(JSON.parse(f.data.bets[older.id].payload).partnerId, 'trevor');
+  assert.equal(JSON.parse(f.data.bets[fallback.id].payload).partnerId, `telegram:${first.chatId}`);
+
+  registry = [{ ...registry[0], telegramChannel: '@kenny_partner' }];
+  assert.deepEqual((await f.service.listReportBets({ includeIncomplete: true })).map(bet => bet.partnerId),
+    ['kenny-current', 'kenny-current', 'telegram:-5550000000']);
+  registry.push({ ...registry[0], id: 'different-partner' });
+  assert.equal((await f.service.listReportBets())[0].partnerId, 'trevor');
 });

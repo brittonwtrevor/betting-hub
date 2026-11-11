@@ -70,15 +70,3 @@ test('partner bet reports require authentication and use the ledger read without
   assert.equal((await request(`${url}?includeIncomplete=true`)).status, 200);
   assert.deepEqual(modes, [false, false, true]);
 });
-
-test('the bet split route accepts only authenticated same-site PATCH requests', async () => {
-  const calls = [];
-  const request = fixture({ async updateSplit(...args) { calls.push(args); return { splitPercent: 50 }; } });
-  const url = '/api/confirms/bets/fill-1/split';
-  const body = { revision: 2, splitPercent: 50 };
-  assert.equal((await request(url, { method: 'DELETE' })).status, 405);
-  assert.equal((await request(url, { method: 'PATCH', body, headers: { authorization: '' } })).status, 401);
-  assert.equal((await request(url, { method: 'PATCH', body, headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
-  assert.equal((await request(url, { method: 'PATCH', body })).status, 200);
-  assert.deepEqual(calls, [['fill-1', body, 'test-user']]);
-});

@@ -119,15 +119,6 @@ function createPartnersService({ env = process.env, createPool, now = () => new 
       const [aliases] = await db.query('SELECT legacy_id, partner_id FROM hub_partner_aliases');
       return rows.map(row => ({ ...record(row), legacyIds: aliases.filter(alias => alias.partner_id === row.id).map(alias => alias.legacy_id) }));
     },
-    async findSplitBps(id) {
-      const db = await database();
-      const [[partner]] = await db.execute(`SELECT split_bps FROM hub_partners
-        WHERE id = COALESCE(
-          (SELECT id FROM hub_partners WHERE id = ?),
-          (SELECT partner_id FROM hub_partner_aliases WHERE legacy_id = ?)
-        )`, [id, id]);
-      return partner?.split_bps ?? fullSplitBps;
-    },
     async add(input) {
       const partner = normalize(input);
       return transaction(async db => {

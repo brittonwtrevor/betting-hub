@@ -46,7 +46,6 @@ const columns = {
   game_at: ['VARCHAR(24)', 'gameAt'], graded_at: ['VARCHAR(24)', 'gradedAt'], deleted_at: ['VARCHAR(24)', 'deletedAt'],
   sport: ['VARCHAR(40)', 'sport'], league: ['VARCHAR(200)', 'league'], game_id: ['VARCHAR(100)', 'gameId'],
   raw_response: ['TEXT', 'rawResponse'],
-  split_bps: ['SMALLINT UNSIGNED', 'splitBps'],
 };
 
 async function migrateRecords(pool) {

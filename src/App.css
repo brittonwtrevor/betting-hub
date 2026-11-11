@@ -194,9 +194,6 @@ h1 { font-size: 29px; line-height: 1.2; font-weight: 650; letter-spacing: -.9px;
 .partner-channel-summary p { font-size: 12px; margin-top: 6px; overflow-wrap: anywhere; }
 .partner-channel-note { font-size: 10px; color: #8290a5; margin-top: 10px; line-height: 1.6; }
 .partner-channel .partner-form { margin-top: 12px; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
-.bet-split-edit { margin-left: 8px; }
-.bet-split-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
-.bet-split-editor input { width: 65px; padding: 6px; border: 1px solid var(--line); border-radius: 5px; font: inherit; }
 
 .monitoring-models { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 20px; align-items: start; }
 .monitoring-models .data-table th[scope="row"] { text-align: left; }

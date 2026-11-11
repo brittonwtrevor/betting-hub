@@ -16,7 +16,6 @@ function fixture() {
       if (fail === true || fail && p?.[0] === fail) throw new Error('private-host password=secret');
       if (sql.startsWith('SELECT * FROM hub_partner_payments')) return [[payments[p[0]]].filter(Boolean).map(copy)];
       if (sql.startsWith('SELECT legacy_id')) return [[aliases[p[0]] ? { partner_id: aliases[p[0]] } : undefined].filter(Boolean)];
-      if (sql.startsWith('SELECT split_bps')) return [[rows[p[0]] ?? rows[aliases[p[1]]]].filter(Boolean).map(copy)];
       if (sql.startsWith('SELECT')) return [[sql.includes('name_key =') ? Object.values(rows).find(row => row.name_key === p[0]) : rows[p[0]]].filter(Boolean).map(copy)];
       if (sql.startsWith('INSERT INTO hub_partner_aliases')) { aliases[p[0]] = p[1]; return [{}]; }
       if (sql.startsWith('INSERT INTO hub_partner_payments')) {
@@ -59,13 +58,15 @@ test('partners and channel edits survive service restart with stable IDs and rev
   await assert.rejects(f.service.add({ name: 'trevor' }), error => error.status === 409);
 });
 
-test('partner splits persist with decimal precision and resolve archived partner IDs', async () => {
+test('partner splits persist with decimal precision and retain archived partner IDs', async () => {
   const f = fixture();
   const initial = await f.service.add({ id: 'main', name: 'Sam' });
   assert.equal(initial.splitPercent, 100);
   const updated = await f.service.update(initial.id, { ...initial, splitPercent: '50.25' });
   await f.restart().importLegacy({ partners: [{ id: 'old', name: 'Sam', splitPercent: 10 }] });
-  assert.equal(await f.restart().findSplitBps('old'), 5025);
+  const [saved] = await f.restart().list();
+  assert.equal(saved.splitPercent, 50.25);
+  assert.deepEqual(saved.legacyIds, ['old']);
   const channelEdit = await f.service.update(initial.id, { name: 'Sam', telegramChannel: '@sam', revision: updated.revision });
   assert.equal(channelEdit.splitPercent, 50.25);
   for (const splitPercent of [-1, '100.01', '1.234', '', null]) {
@@ -73,7 +74,7 @@ test('partner splits persist with decimal precision and resolve archived partner
   }
   const zero = await f.service.update(initial.id, { ...channelEdit, splitPercent: 0 });
   assert.equal(zero.splitPercent, 0);
-  assert.equal(await f.service.findSplitBps('old'), 0);
+  assert.equal((await f.restart().list())[0].splitPercent, 0);
 });
 
 test('payments persist across restarts, preserve cents, and can be retried without a duplicate', async () => {

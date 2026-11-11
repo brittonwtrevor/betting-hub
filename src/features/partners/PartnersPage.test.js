@@ -2,7 +2,6 @@ import React from 'react';
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import PartnersPage from './PartnersPage';
-import { splitAmount, splitToBps } from './split';
 
 const partners = [
   { id: 'a', name: 'Partner A', openExposure: 100, owedToYou: 25, owedToPartner: 0 },
@@ -29,15 +28,6 @@ beforeEach(() => {
   global.fetch = jest.fn(async (url, options = {}) => {
     if (url === '/api/confirms/bets') return response({ bets: reportedBets });
     const input = options.body && JSON.parse(options.body);
-    if (url.endsWith('/split')) {
-      const id = url.split('/').at(-2);
-      const bet = reportedBets.find(item => item.id === id);
-      const bps = splitToBps(input.splitPercent);
-      const saved = { id, revision: bet.revision + 1, splitPercent: input.splitPercent,
-        yourRisk: splitAmount(bet.stake, bps), yourShare: splitAmount(bet.settledProfit, bps) };
-      reportedBets = reportedBets.map(item => item.id === id ? { ...item, ...saved } : item);
-      return response({ bet: saved });
-    }
     if (url === '/api/partners/ledger/payments') {
       if (options.method !== 'POST') return response({ payments: recordedPayments });
       const saved = recordedPayments.find(payment => payment.id === input.id);
@@ -275,12 +265,12 @@ test('payments clear each partner’s settled balance in either direction and su
   expect(stat('Owed to you')).toHaveTextContent('$0.00');
 });
 
-test('edits partner and bet splits independently and exports the selected partner’s exact shares', async () => {
-  persisted = [{ id: 'a', name: 'Partner A', telegramChannel: '@sam', splitPercent: 50, revision: 1 },
+test('updates all past bets, balances, exposure and the history CSV when the partner split changes', async () => {
+  persisted = [{ id: 'a', name: 'Partner A', telegramChannel: '@sam', splitPercent: 50, legacyIds: ['old-a'], revision: 1 },
     { id: 'b', name: 'Partner B', splitPercent: 100, revision: 1 }];
   reportedBets = [
-    { id: 'first', betId: 'BOS145', partnerId: 'a', stake: 1000, status: 'WIN', settledProfit: 1000, splitPercent: 50, revision: 1 },
-    { id: 'open', betId: 'BOS146', partnerId: 'a', stake: 1000, status: 'UNGRADED', settledProfit: null, splitPercent: 50, revision: 1 },
+    { id: 'first', betId: 'BOS145', partnerId: 'old-a', stake: 1000, status: 'WIN', settledProfit: 1000, splitPercent: 100, yourRisk: 1000, yourShare: 1000 },
+    { id: 'open', betId: 'BOS146', partnerId: 'a', stake: 1000, status: 'UNGRADED', settledProfit: null, splitPercent: 100, yourRisk: 1000 },
     { id: 'other', betId: 'TOR145', partnerId: 'b', stake: 1000, status: 'WIN', settledProfit: 1000, splitPercent: 100, revision: 1 },
   ];
   recordedPayments = [{ id: 'payment', partnerId: 'a', amount: 200, direction: 'Received', status: 'Complete' }];
@@ -294,19 +284,13 @@ test('edits partner and bet splits independently and exports the selected partne
   expect(stat('Owed to you')).toHaveTextContent('$300.00');
 
   fireEvent.click(screen.getByRole('button', { name: 'Edit partner split' }));
-  fireEvent.change(screen.getByLabelText('Split (%)'), { target: { value: '25' } });
+  fireEvent.change(screen.getByLabelText('Split (%)'), { target: { value: '10' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save partner split' }));
-  await waitFor(() => expect(persisted.find(partner => partner.id === 'a')).toMatchObject({ splitPercent: 25, telegramChannel: '@sam' }));
-  expect(stat('Open exposure')).toHaveTextContent('$500.00');
-  expect(stat('Owed to you')).toHaveTextContent('$300.00');
-
-  const editBet = within(table).getByRole('button', { name: 'Edit split for BOS145' });
-  await waitFor(() => expect(editBet).toBeEnabled());
-  fireEvent.click(editBet);
-  fireEvent.change(within(table).getByLabelText('Split for BOS145'), { target: { value: '25' } });
-  fireEvent.click(within(table).getByRole('button', { name: 'Save', exact: true }));
-  await waitFor(() => expect(stat('Owed to you')).toHaveTextContent('$50.00'));
-  expect(stat('Open exposure')).toHaveTextContent('$500.00');
+  await waitFor(() => expect(stat('Open exposure')).toHaveTextContent('$100.00'));
+  expect(stat('Owed to you')).toHaveTextContent('$0.00');
+  expect(stat('Owed to partner')).toHaveTextContent('$100.00');
+  expect(within(table).getAllByText('10%')).toHaveLength(2);
+  expect(persisted.find(partner => partner.id === 'a')).toMatchObject({ splitPercent: 10, telegramChannel: '@sam' });
 
   const create = URL.createObjectURL;
   const revoke = URL.revokeObjectURL;
@@ -323,8 +307,16 @@ test('edits partner and bet splits independently and exports the selected partne
     });
     expect(click.mock.instances[0].download).toBe('partner-a-bet-history.csv');
     expect(csv).toContain('"Split (%)","Your risk","Your P/L"');
-    expect(csv).toContain('"WIN",1000,25,250,250');
+    expect(csv).toContain('"WIN",1000,10,100,100');
     expect(csv).not.toContain('TOR145');
+    fireEvent.click(within(tabs).getByRole('button', { name: 'All Partners' }));
+    const balances = screen.getByRole('table', { name: 'Partner balances' });
+    const a = within(balances).getByRole('button', { name: 'Partner A' }).closest('tr');
+    expect(within(a).getAllByRole('cell').slice(1).map(cell => cell.textContent)).toEqual([
+      '10%', '$100.00', '$1,000.00', '$100.00', '$200.00', '$0.00', '$100.00',
+    ]);
+    expect(stat('Owed to you')).toHaveTextContent('$1,000.00');
+    expect(stat('Owed to partner')).toHaveTextContent('$100.00');
   } finally {
     click.mockRestore();
     URL.createObjectURL = create;

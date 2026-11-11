@@ -70,7 +70,6 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
   const [channelError, setChannelError] = useState('');
   const [newSplit, setNewSplit] = useState('100');
   const [partnerSplit, setPartnerSplit] = useState(null);
-  const [betSplit, setBetSplit] = useState(null);
   const [saving, setSaving] = useState(false);
   const [addingPayment, setAddingPayment] = useState(false);
   const partners = [...connectedPartners.map(partner => {
@@ -82,9 +81,16 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
   const matchesPartner = record => !selected || record.partnerId === selected.id;
   const findPartner = id => partners.find(partner => partner.id === id || partner.legacyIds?.includes(id));
   const reportBets = (bets ?? report.bets).map(bet => {
-    const bps = splitToBps(bet.splitPercent) ?? fullSplitBps;
-    return { ...bet, partnerId: findPartner(bet.partnerId)?.id ?? bet.partnerId, splitPercent: bps / 100,
-      yourRisk: bet.yourRisk ?? splitAmount(bet.stake, bps), yourShare: bet.yourShare ?? splitAmount(bet.settledProfit, bps) };
+    const partner = findPartner(bet.partnerId);
+    const configuredBps = splitToBps(partner?.splitPercent);
+    const bps = configuredBps ?? splitToBps(bet.splitPercent) ?? fullSplitBps;
+    return {
+      ...bet,
+      partnerId: partner?.id ?? bet.partnerId,
+      splitPercent: bps / 100,
+      yourRisk: configuredBps === null && bet.yourRisk != null ? bet.yourRisk : splitAmount(bet.stake, bps),
+      yourShare: configuredBps === null && bet.yourShare != null ? bet.yourShare : splitAmount(bet.settledProfit, bps),
+    };
   });
   const scopedBets = reportBets.filter(matchesPartner);
   const savedPartners = new Set(localPartners.map(partner => partner.id));
@@ -134,7 +140,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
   }));
   const choosePartner = id => {
     setPartnerId(id); setEditingChannel(false); setChannelError(''); setAddingPayment(false);
-    setPartnerSplit(null); setBetSplit(null);
+    setPartnerSplit(null);
     setQuery(''); setTab(id === 'all' ? 'balances' : 'reports');
   };
   async function addPayment(input) {
@@ -176,28 +182,6 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
     }
     finally { setSaving(false); }
   }
-  async function saveBetSplit(event) {
-    event.preventDefault();
-    const bps = splitToBps(betSplit.value);
-    if (bps === null) { setBetSplit({ ...betSplit, error: splitError }); return; }
-    setSaving(true);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    try {
-      const response = await fetch(`/api/confirms/bets/${encodeURIComponent(betSplit.id)}/split`, {
-        method: 'PATCH', credentials: 'same-origin', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'X-Betting-Hub': 'confirms' },
-        body: JSON.stringify({ splitPercent: bps / 100, revision: betSplit.revision }),
-      });
-      const result = await response.json();
-      if (!response.ok || result.bet?.id !== betSplit.id) throw new Error(result.message || 'Unable to save the bet split.');
-      setReport(current => ({ ...current, bets: current.bets.map(bet => bet.id === result.bet.id ? { ...bet, ...result.bet } : bet) }));
-      setBetSplit(null);
-    } catch (failure) {
-      const error = failure.name === 'AbortError' ? 'The request timed out. Refresh the bet report to check the saved split.' : failure.message;
-      setBetSplit(current => current === betSplit ? { ...current, error } : current);
-    } finally { clearTimeout(timeout); setSaving(false); }
-  }
   async function saveChannel(event) {
     event.preventDefault();
     if (!selected) return;
@@ -224,7 +208,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
       bet.sport === 'lol' ? 'LoL' : bet.sport === 'hockey' ? 'Hockey' : bet.sport || '—'];
     const grade = bet.status === 'UNGRADED' ? 'Pending' : bet.status || '—';
     const odds = Number.isFinite(bet.odds) && bet.odds > 0 ? `+${bet.odds}` : bet.odds ?? '—';
-    return { id: bet.id, partnerId: bet.partnerId, bet,
+    return { id: bet.id, partnerId: bet.partnerId,
       cells: [...details, currency(bet.stake), odds, grade, currency(bet.settledProfit), `${bet.splitPercent}%`, currency(bet.yourRisk), currency(bet.yourShare)],
       csv: [...details, bet.stake, bet.odds, grade, bet.settledProfit, bet.splitPercent, bet.yourRisk, bet.yourShare] };
   }) : scopedPayments.map(payment => ({
@@ -239,7 +223,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
   return <>
     <div className="partner-toolbar">
       <Segments label="Partners" items={[{ value: 'all', label: 'All Partners' }, ...partners.map(partner => ({ value: partner.id, label: partner.name }))]} value={partnerId} onChange={choosePartner} />
-      <div><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { void registry.reload(); setRefresh(value => value + 1); setPartnerSplit(null); setBetSplit(null); }}>Refresh partners</button><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { setAdding(!adding); setEditingChannel(false); setPartnerSplit(null); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button></div>
+      <div><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { void registry.reload(); setRefresh(value => value + 1); setPartnerSplit(null); }}>Refresh partners</button><button type="button" className="button button-secondary" disabled={registry.loading || saving} onClick={() => { setAdding(!adding); setEditingChannel(false); setPartnerSplit(null); setError(''); }} aria-expanded={adding} aria-controls="add-partner">{adding ? 'Cancel' : 'Add partner'}</button></div>
     </div>
     {bets === undefined && report.loading && <p role="status">Loading partner bets…</p>}
     {bets === undefined && report.error && <p role="alert" className="sends-error">{report.error} Use Refresh partners to try again.</p>}
@@ -280,7 +264,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
         <div><input autoFocus id="partner-split-percent" inputMode="decimal" value={partnerSplit.value} disabled={saving}
           onChange={event => setPartnerSplit({ ...partnerSplit, value: event.target.value, error: '' })} />
           <button type="submit" className="button button-primary" disabled={saving}>Save partner split</button></div>
-        <p>This rate applies when new bets are logged. Edit an individual bet’s split in Bet Reports.</p>
+        <p>This split applies to all past and future bets for this partner.</p>
         {partnerSplit.error && <p role="alert">{partnerSplit.error}</p>}
       </form>}
     </section>}
@@ -302,22 +286,9 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
         onSave={addPayment} onCancel={() => setAddingPayment(false)} /></div>}
       {tab === 'payments' && ledger.loading && <p className="panel-controls" role="status">Loading payment history…</p>}
       <div className="table-scroll"><table className="data-table" aria-label={view.title}><thead><tr>{view.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>
-        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => {
-          const column = view.columns[index];
-          return <td key={column}>
-            {index === 0 && findPartner(row.partnerId) ? <button type="button" className="partner-link" onClick={() => choosePartner(row.partnerId)}>{cell}</button> : cell}
-            {column === 'Split (%)' && bets === undefined && Number.isInteger(row.bet?.revision) &&
-              (betSplit?.id === row.id ? <form className="bet-split-editor" onSubmit={saveBetSplit}>
-                <input autoFocus aria-label={`Split for ${row.bet.betId}`} inputMode="decimal" value={betSplit.value} disabled={saving}
-                  onChange={event => setBetSplit({ ...betSplit, value: event.target.value, error: '' })} />
-                <button type="submit" className="button button-primary" disabled={saving || report.loading}>Save</button>
-                <button type="button" className="button button-secondary" disabled={saving} onClick={() => setBetSplit(null)}>Cancel</button>
-                {betSplit.error && <p className="sends-error" role="alert">{betSplit.error}</p>}
-              </form> : <button type="button" className="partner-link bet-split-edit" disabled={saving || report.loading || !!report.error}
-                aria-label={`Edit split for ${row.bet.betId}`}
-                onClick={() => setBetSplit({ id: row.id, revision: row.bet.revision, value: String(row.bet.splitPercent) })}>Edit</button>)}
-          </td>;
-        })}</tr>)}
+        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={view.columns[index]}>
+          {index === 0 && findPartner(row.partnerId) ? <button type="button" className="partner-link" onClick={() => choosePartner(row.partnerId)}>{cell}</button> : cell}
+        </td>)}</tr>)}
         {!filtered.length && (tab !== 'payments' || (!ledger.loading && !ledger.error)) && <tr><td colSpan={view.columns.length}><EmptyState icon="users" title={query ? 'No matching records' : view.empty} description={query ? 'Try another search.' : selected ? `Saved records for ${selected.name} will appear here.` : 'Saved partner records will appear here.'} /></td></tr>}
       </tbody></table></div>
     </Panel>
