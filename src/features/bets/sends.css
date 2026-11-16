@@ -7,6 +7,7 @@
 .bet-date-fields input[type="range"] { width: 115px; min-height: 35px; margin: 0; accent-color: var(--accent); }
 .sends-toolbar .segment:disabled { opacity: .55; }
 .sends-toolbar .segment, .sends-toolbar .button { color: #000; font-size: 13px; }
+.sends-toolbar .button-primary { color: #fff; }
 .sends-list { display: flex; flex-direction: column; gap: 16px; }
 .send-card { --ink: #000; --muted: #000; color: #000; min-width: 0; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; overflow: hidden; }
 .send-card-header { padding: 15px 20px; }
@@ -67,7 +68,12 @@
 .send-card-details small { display: block; font-size: 13px; color: var(--muted); font-weight: 400; margin-top: 3px; overflow-wrap: anywhere; }
 .send-card-details fieldset p { font-size: 14px; margin-top: 10px; color: #000; }
 .send-notes td { white-space: normal; }
-.send-notes textarea { width: 100%; resize: vertical; min-height: 60px; border: 1px solid #dfe5ef; border-radius: 5px; padding: 8px; color: #000; font: inherit; font-weight: 400; }
+.send-notes textarea, .manual-send-form textarea { width: 100%; resize: vertical; min-height: 60px; border: 1px solid #dfe5ef; border-radius: 5px; padding: 8px; color: #000; font: inherit; font-weight: 400; }
+.manual-send-form { display: grid; gap: 10px; padding: 16px 20px; font-size: 14px; }
+.manual-send-form label { font-weight: 600; }
+.manual-send-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.data-table.manual-send-details { min-width: 0; }
+.manual-send-details th { white-space: normal; width: 10rem; }
 .send-card-footer { padding: 12px 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
 .send-deliveries { margin: 0; padding: 0 20px 14px 36px; font-size: 13px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
 .sends-error { color: #a52d38; background: #fff3f3; border: 1px solid #f0d2d5; padding: 12px 16px; font-size: 12px; line-height: 1.6; border-radius: 6px; }
@@ -115,7 +121,9 @@
 .confirmation-fields .confirmation-row[data-grade="UNGRADED"] { background: #fffbea; }
 .confirmation-fields .confirmation-row[data-grade="WIN"] { background: #edf9f0; }
 .confirmation-fields .confirmation-row[data-grade="LOSS"] { background: #fff0f0; }
-.confirmation-fields input, .confirmation-fields select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 6px 4px; font: inherit; background: var(--paper); color: inherit; }
+.confirmation-fields input, .confirmation-fields select, .confirmation-fields textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 6px 4px; font: inherit; background: var(--paper); color: inherit; }
+.confirmation-bet { display: block; field-sizing: content; resize: vertical; }
+.confirmation-fields .confirmation-use-parlay { margin-top: 4px; padding: 4px 6px; white-space: normal; }
 .confirmation-fields .confirmation-actions .button { width: 100%; min-height: 28px; padding: 5px 3px; margin-bottom: 4px; white-space: normal; }
 .confirmation-fields small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 .confirm-profit { color: #24754c; }

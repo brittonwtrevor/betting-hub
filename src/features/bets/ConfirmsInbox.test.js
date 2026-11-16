@@ -112,6 +112,19 @@ test('loads editable wager fields, grading options and original source without c
   expect(fetch).toHaveBeenCalledWith('/api/confirms', expect.objectContaining({ method: 'GET', credentials: 'same-origin' }));
 });
 
+test('puts the suggested extra parlay legs in the multiline Bet field and saves the full description', async () => {
+  const fullBet = 'Parlay: Hanwha Life Esports Moneyline x Niagara -1.5 x Boston College Moneyline';
+  stored.sources[0].bets[0].parlayFromReply = fullBet;
+  render(<ConfirmsInbox />);
+  const bet = await screen.findByRole('textbox', { name: 'Bet for bet-1' });
+  expect(bet).toHaveValue('Moneyline');
+  fireEvent.click(screen.getByRole('button', { name: 'Use parlay legs from reply' }));
+  expect(bet).toHaveValue(fullBet);
+  expect(bet).toHaveAttribute('rows', '3');
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(stored.sources[0].bets[0].bet).toBe(fullBet));
+});
+
 test('groups separate replies by Bet ID and keeps each wager independently editable', async () => {
   const anotherBet = { ...base, id: 'bet-2', bet: 'Map 1', risk: 25, odds: 366, sourceId: 'reply-2' };
   const anotherPartner = { ...base, id: 'bet-3', partnerId: 'kenny', partnerName: 'Kenny', sourceId: 'reply-3' };

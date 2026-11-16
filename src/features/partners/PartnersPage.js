@@ -193,8 +193,8 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
     catch (failure) { setChannelError(failure.message); }
     finally { setSaving(false); }
   }
-  const sum = key => {
-    const values = scopedPartners.map(partner => key === 'openExposure' ? balance(partner, key) : amounts.get(partner.id)[key]);
+  const sum = getAmount => {
+    const values = scopedPartners.map(getAmount);
     return values.length && values.every(Number.isFinite) ? values.reduce((total, value) => total + cents(value), 0) / 100 : undefined;
   };
   const view = views[tab];
@@ -268,11 +268,12 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
         {partnerSplit.error && <p role="alert">{partnerSplit.error}</p>}
       </form>}
     </section>}
-    <StatGrid items={[
+    <StatGrid className="partner-stat-grid" items={[
       selected ? { label: 'Bet records', value: String(scopedBets.length), note: `${selected.name} · ${scopedPayments.length} payment records`, icon: 'users' } : { label: 'Partners', value: String(partners.length), note: 'Select a partner to see their ledger', icon: 'users' },
-      { label: 'Open exposure', value: currency(sum('openExposure')), icon: 'layers' },
-      { label: 'Owed to you', value: currency(sum('owedToYou')), note: selected ? `From ${selected.name}` : 'Across all partners', icon: 'wallet' },
-      { label: 'Owed to partner', value: currency(sum('owedToPartner')), note: selected ? `To ${selected.name}` : 'Across all partners', icon: 'wallet' },
+      { label: 'Open exposure', value: currency(sum(partner => balance(partner, 'openExposure'))), icon: 'layers' },
+      { label: 'Your Share', value: currency(sum(partner => balance(partner, 'yourShare'))), note: selected ? `Settled P/L share for ${selected.name}` : 'Settled P/L share across all partners', icon: 'chart' },
+      { label: 'Owed to you', value: currency(sum(partner => amounts.get(partner.id).owedToYou)), note: selected ? `From ${selected.name}` : 'Across all partners', icon: 'wallet' },
+      { label: 'Owed to partner', value: currency(sum(partner => amounts.get(partner.id).owedToPartner)), note: selected ? `To ${selected.name}` : 'Across all partners', icon: 'wallet' },
     ]} />
     <Panel title={`${selected ? `${selected.name} · ` : ''}${view.title}`} description={selected ? 'Bets, agreed shares, and payments for this partner.' : 'Select a partner name to open their detailed ledger.'}
       action={!addingPayment && (selected ? savedPartners.has(selected.id) : savedPartners.size > 0) &&

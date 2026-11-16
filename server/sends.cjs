@@ -8,6 +8,12 @@ function text(value, max = 200, required = false) {
   if (typeof value !== 'string' || value.length > max || (required && !value.trim())) throw invalid('Invalid or missing draft field.');
   return value.trim();
 }
+function manualInstructions(value) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 2000) {
+    throw invalid('Enter bet instructions of up to 2,000 characters.');
+  }
+  return value.trim();
+}
 function normalizeGame(raw) {
   if (!raw || !['lol', 'hockey'].includes(raw.sport)) throw invalid('Select a supported game.');
   const game = { sport: raw.sport };
@@ -46,7 +52,11 @@ function chooseMarkets(game, ids) {
   });
 }
 function editDraft(draft, input) {
-  if (!input || !Array.isArray(input.markets) || !input.markets.length || input.markets.length > 60) throw invalid('Keep at least one market, or remove the card.');
+  if (!Array.isArray(input?.recipients) || input.recipients.length > 100) throw invalid('Invalid partners.');
+  const recipients = input.recipients.map(partner => ({ id: text(partner?.id, 100, true), name: text(partner?.name, 200, true), telegramChannel: text(partner?.telegramChannel, 200) }));
+  const next = { ...draft, recipients, notes: text(input.notes, 2000) };
+  if (draft.manualText) return { ...next, manualText: manualInstructions(input.manualText) };
+  if (!Array.isArray(input.markets) || !input.markets.length || input.markets.length > 60) throw invalid('Keep at least one market, or remove the card.');
   const current = new Map(draft.markets.map(market => [market.id, market]));
   const seen = new Set();
   const markets = input.markets.map(edit => {
@@ -59,15 +69,18 @@ function editDraft(draft, input) {
     if (existing.needsLine && line && (!/^\d+(?:\.\d+)?$/.test(line) || Number(line) <= 0 || Number(line) > 1000)) throw invalid(`Enter a positive total for ${existing.label}.`);
     return { ...existing, playTo, line };
   });
-  if (!Array.isArray(input.recipients) || input.recipients.length > 100) throw invalid('Invalid partners.');
-  const recipients = input.recipients.map(partner => ({ id: text(partner?.id, 100, true), name: text(partner?.name, 200, true), telegramChannel: text(partner?.telegramChannel, 200) }));
-  return { ...draft, markets, recipients, notes: text(input.notes, 2000) };
+  return { ...next, markets };
 }
 function teamPrefix(draft) {
   const side = draft.markets.find(market => /^[ab]:/.test(market.id))?.id[0] || 'a';
-  return draft.game[`team_${side}`].normalize('NFKD').replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3).padEnd(3, 'X');
+  const name = draft.manualText || draft.game[`team_${side}`];
+  const letters = name.normalize('NFKD').replace(/[^a-z]/gi, '').toUpperCase().slice(0, 3);
+  return (draft.manualText && !letters ? 'MAN' : letters).padEnd(3, 'X');
 }
 function telegramText(draft, { includeGoalies = false } = {}) {
+  const header = `Bet ID: ${draft.betId}`;
+  const notes = draft.notes ? ['', `Notes: ${draft.notes}`] : [];
+  if (draft.manualText) return [header, '', draft.manualText, ...notes].join('\n');
   for (const market of draft.markets) {
     if (!market.playTo) throw invalid(`Enter a play-to price for ${market.label} before sending.`);
     if (market.needsLine && !market.line) throw invalid(`Enter a total for ${market.label} before sending.`);
@@ -76,12 +89,12 @@ function telegramText(draft, { includeGoalies = false } = {}) {
   const start = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp) ? timestamp : `${timestamp}Z`);
   const when = start.toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
   const message = [
-    `Bet ID: ${draft.betId}`,
+    header,
     `${draft.game.team_a} vs ${draft.game.team_b}`,
     `${gameDescription(draft.game, { includeGoalies })} · ${when}`,
     '',
     ...draft.markets.map(market => `• ${market.label}${market.needsLine ? ` ${market.line}` : ''} · Play to ${Number(market.playTo) > 0 ? '+' : ''}${Number(market.playTo)}`),
-    ...(draft.notes ? ['', `Notes: ${draft.notes}`] : []),
+    ...notes,
   ].join('\n');
   if (!includeGoalies && message.length > 4096) throw invalid('This card exceeds Telegram’s 4,096-character limit. Shorten the notes or remove some markets.');
   return message;
@@ -165,6 +178,20 @@ function createSendsService({ env = process.env, createPool, now = () => new Dat
       return drafts;
     },
     async add(input) {
+      if (Object.hasOwn(input ?? {}, 'manualText')) {
+        const manualText = manualInstructions(input.manualText);
+        const id = makeId();
+        const createdAt = now().toISOString();
+        const draft = {
+          id, manualText, game: { sport: 'other' }, markets: [], notes: '', recipients: [],
+          status: 'draft', createdAt, updatedAt: createdAt,
+        };
+        const key = createHash('sha256').update(`manual:${id}`).digest('hex');
+        return transaction(async connection => {
+          await connection.execute('INSERT INTO hub_send_drafts (id, game_key, payload) VALUES (?, ?, ?)', [id, key, JSON.stringify(draft)]);
+          return identify(connection, { ...draft, revision: 1 });
+        });
+      }
       const game = normalizeGame(input?.game);
       const selected = chooseMarkets(game, input?.marketIds);
       const key = gameKey(game);

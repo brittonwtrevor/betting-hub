@@ -2,7 +2,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { mysqlOptions } = require('./lol.cjs');
 const { confirmationTeam, normalizeFields } = require('../src/features/bets/confirmationFields');
 const { fullSplitBps, splitToBps, splitAmount } = require('../src/features/partners/split');
-const { createConfirmParser, eligibleContexts, partnerFor, defaultFields } = require('./confirm-parser.cjs');
+const { createConfirmParser, eligibleContexts, partnerFor, defaultFields, savedParlayDescription } = require('./confirm-parser.cjs');
 const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
 const { createConfirmNotifications } = require('./confirm-notifications.cjs');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
@@ -246,6 +246,9 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
           });
           const byBet = new Map(savedBets.map(bet => [bet.id, bet.fields]));
           const contexts = eligibleContexts(payload.message);
+          const originalBet = savedBets.length === 1 && savedBets[0].fields;
+          const parlayFromReply = originalBet && !originalBet.deletedAt ? savedParlayDescription(payload.message,
+            contexts.find(item => item.betId === originalBet.betId)?.context, originalBet) : undefined;
           const sports = [...new Set(contexts.map(item => item.context.game.sport).filter(Boolean))];
           sources.push({ id: row.id, revision: row.revision, status: row.status, ...payload, sports, eligibleBetIds: contexts.map(item => item.betId),
             error: row.last_error, deletedBetCount: savedBets.filter(bet => bet.fields.deletedAt).length,
@@ -254,6 +257,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
                 betId: byBet.get(receipt.bet_row_id).betId })),
             bets: savedBets.filter(bet => !bet.fields.deletedAt).map(bet => ({ id: bet.id, sourceId: row.id,
               revision: bet.revision, createdAt: bet.created_at, updatedAt: bet.updated_at, ...bet.fields,
+              ...(parlayFromReply ? { parlayFromReply } : {}),
               notifications: receipts.filter(receipt => receipt.bet_row_id === bet.id).map(receipt => ({ id: receipt.id, kind: receipt.kind, status: receipt.status, error: receipt.last_error, updatedAt: receipt.updated_at })) })) });
         }
       }

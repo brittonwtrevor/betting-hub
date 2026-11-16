@@ -41,6 +41,24 @@ test('supports multiple fills and leaves ambiguous values blank for review', () 
   assert.equal(validateExtraction({ ...extracted, bets: [{ ...extracted.bets[0], grade: 'WIN', pl: 100000 }] }, message).bets[0].pl, null);
 });
 
+test('manual send instructions provide selection context without supplying the actual risk or price', async () => {
+  const manualText = 'Chiefs -3.5 vs Broncos. Play to -110.';
+  const reply = { ...message, text: 'CHI145 $250 -105', betIds: ['CHI145'], contexts: [{ betId: 'CHI145',
+    context: { manualText, game: { sport: 'other' }, markets: [], recipients: context.recipients } }] };
+  const calls = [];
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async (_url, input) => {
+    calls.push(JSON.parse(input.body));
+    return response({ bets: [{ betId: 'CHI145', game: 'Chiefs vs Broncos', team: 'Chiefs', bet: 'Chiefs -3.5', risk: 250, odds: -105 }], issues: [] });
+  } });
+  const [bet] = (await parser.parse(reply)).bets;
+  assert.deepEqual(JSON.parse(calls[0].messages.at(-1).content), { reply: reply.text, sends: [{ betId: 'CHI145', manualText }] });
+  assert.deepEqual(bet, normalizeFields({ betId: 'CHI145', game: 'Chiefs vs Broncos', team: 'Chiefs', bet: 'Chiefs -3.5', risk: 250, odds: -105 }));
+  assert.equal(bet.complete, true);
+  assert.deepEqual(defaultFields(reply), { betId: 'CHI145', game: manualText, team: 'Match', bet: manualText,
+    risk: null, odds: null, grade: 'UNGRADED', partialReturn: null });
+  await assert.rejects(parser.parse({ ...reply, chatId: '-999' }), /send context is unavailable/);
+});
+
 test('assigns Total Goals to hockey game totals and keeps the team on team totals', () => {
   const hockey = { ...message, text: 'TEX137 Total goals o5.5 $960 -120', betIds: ['TEX137'],
     contexts: [{ betId: 'TEX137', context: { ...context, game: { sport: 'hockey', team_a: 'Texas Stars', team_b: 'Manitoba Moose' } } }] };
@@ -56,23 +74,47 @@ test('assigns Total Goals to hockey game totals and keeps the team on team total
 });
 
 test('accepts positive odds in a multi-bet Telegram reply even if the model omits JSON quotes', async () => {
-  const harvard = { ...message, text: 'HAR561 Harvard +2.5 $670 -134 Harvard ML $500 +366', betIds: ['HAR561'],
+  const harvard = { ...message, text: 'HAR561 Harvard +2.5 $670 -127.2 Harvard ML $500 +366.7', betIds: ['HAR561'],
     contexts: [{ betId: 'HAR561', context: { ...context, game: { team_a: 'Boston Univ.', team_b: 'Harvard Univ.' },
       markets: [{ id: 'b:spread', label: 'Harvard +2.5', line: 2.5 }, { id: 'b:ml', label: 'Harvard ML' }] } }] };
   const selection = { betId: 'HAR561', team: 'Harvard Univ.' };
-  const bets = [{ ...selection, bet: 'Spread +2.5', risk: 670, odds: -134 }, { ...selection, bet: 'Moneyline', risk: 500, odds: '+366' }];
-  const issues = ['Preserve quoted text such as "odds":+366, as written.'];
+  const bets = [{ ...selection, bet: 'Spread +2.5', risk: 670, odds: -127.2 }, { ...selection, bet: 'Moneyline', risk: 500, odds: '+366.7' }];
+  const issues = ['Preserve quoted text such as "odds":+366.7, as written.'];
   const json = JSON.stringify({ bets, issues });
-  for (const content of [json, json.replace('"odds":"+366"', '"odds": +366')]) {
+  for (const content of [json, json.replace('"odds":"+366.7"', '"odds": +366.7')]) {
     const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => ({
       ok: true, json: async () => ({ choices: [{ message: { content }, finish_reason: 'stop' }] }),
     }) });
     const result = await parser.parse(harvard);
     assert.deepEqual(result.bets.map(({ bet, risk, odds }) => ({ bet, risk, odds })), [
-      { bet: 'Spread +2.5', risk: 670, odds: -134 }, { bet: 'Moneyline', risk: 500, odds: 366 },
+      { bet: 'Spread +2.5', risk: 670, odds: -127 }, { bet: 'Moneyline', risk: 500, odds: 367 },
     ]);
     assert.deepEqual(result.issues, issues);
   }
+});
+
+test('keeps Harvard +2.5 as a spread selection and reads price and risk separately', async () => {
+  const harvard = { ...message, betIds: ['HAR561'], contexts: [{ betId: 'HAR561', context: { ...context,
+    game: { sport: 'hockey', team_a: 'Boston Univ.', team_b: 'Harvard Univ.' },
+    markets: [{ id: 'b:handicap:2.5', label: 'Harvard +2.5 goals', line: 2.5, playTo: '-110' }],
+  } }] };
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => {
+    assert.fail('A standalone team and spread can be read directly');
+  } });
+  for (const terms of ['-127.2 $670', '$670 -127.2']) {
+    const result = await parser.parse({ ...harvard, text: `HAR561\nHarvard +2.5 ${terms}` });
+    assert.deepEqual(result.bets.map(({ betId, team, bet, risk, odds, complete }) => ({ betId, team, bet, risk, odds, complete })), [
+      { betId: 'HAR561', team: 'Harvard Univ.', bet: 'Harvard +2.5', risk: 670, odds: -127, complete: true },
+    ]);
+    assert.deepEqual(result.issues, []);
+  }
+  const partial = await parser.parse({ ...harvard, text: 'HAR561 Harvard +2.5' });
+  const [bet] = partial.bets;
+  assert.equal(bet.bet, 'Harvard +2.5');
+  assert.equal(bet.odds, null);
+  assert.equal(bet.risk, null);
+  assert.equal(bet.complete, false);
+  assert.deepEqual(partial.issues, ['The reply is missing risk and odds.']);
 });
 
 test('keeps every named parlay leg in one Bet description and the combined price in Odds', async () => {
@@ -114,6 +156,56 @@ test('raw parlay reply overrides a straight handicap or separately extracted leg
   }
   assert.throws(() => validateExtraction({ bets: [handicap], issues: [] }, { ...reply,
     text: 'HAR561 $2500 at +300 parlay Harvard +2.5 and Chiefs ML' }), /parlay.*manually/);
+});
+
+test('keeps extra parlay legs from before or after the combined terms in one Bet field', () => {
+  const fill = { ...extracted.bets[0], odds: 470, risk: 3000 };
+  const result = { bets: [fill], issues: [] };
+  for (const text of [
+    'HAN187 Moneyline +470 $3,000\nParlay with Boston College Moneyline x Niagara -1.5',
+    'HAN187 Moneyline $3,000 +470 parlay with Boston College Moneyline\nx Niagara -1.5',
+    'HAN187 Moneyline parlay with Boston College Moneyline x Niagara -1.5 $3,000 +470',
+  ]) {
+    const { bets } = validateExtraction(result, { ...message, text });
+    assert.equal(bets.length, 1);
+    assert.equal(bets[0].bet, 'Parlay: Hanwha Life Esports Moneyline x Boston College Moneyline x Niagara -1.5');
+    assert.equal(bets[0].risk, 3000);
+    assert.equal(bets[0].odds, 470);
+  }
+  assert.throws(() => validateExtraction(result, {
+    ...message, text: 'HAN187 Moneyline +470 $3,000 parlay with Boston College Moneyline +120 $500',
+  }), /parlay.*manually/);
+});
+
+test('parses the Niagara reply as one cross-game parlay with its linked team, combined price, and stake', async () => {
+  const reply = { ...message, text: 'NIA735\nNiagara -1.5 x Boston College Moneyline +470 $3000', betIds: ['NIA735'],
+    contexts: [{ betId: 'NIA735', context: { ...context,
+      game: { sport: 'hockey', team_a: 'Niagara Univ.', team_b: 'Army' },
+      markets: [{ id: 'a:spread', label: 'Niagara -1.5' }, { id: 'b:ml', label: 'Army ML' }],
+    } }] };
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => {
+    assert.fail('A complete shorthand parlay should be read directly from the reply');
+  } });
+  const result = await parser.parse(reply);
+  assert.deepEqual(result.bets.map(({ betId, team, bet, risk, odds, complete }) => ({ betId, team, bet, risk, odds, complete })), [
+    { betId: 'NIA735', team: 'Niagara Univ.', bet: 'Parlay: Niagara -1.5 x Boston College Moneyline', risk: 3000, odds: 470, complete: true },
+  ]);
+  assert.deepEqual(result.issues, []);
+  for (const separator of ['X', '×']) {
+    const [bet] = (await parser.parse({ ...reply,
+      text: `NIA735 Niagara -1.5 ${separator} Boston College ML +470.5 $3,000.00`,
+    })).bets;
+    assert.equal(bet.bet, `Parlay: Niagara -1.5 ${separator} Boston College ML`);
+    assert.equal(bet.odds, 471);
+    assert.equal(bet.risk, 3000);
+  }
+  await assert.rejects(parser.parse({ ...reply, chatId: '-999' }), /send context is unavailable/);
+
+  const wrongTeam = { bets: [{ betId: 'NIA735', team: 'Boston College', bet: 'Moneyline', risk: 3000, odds: 470 }], issues: [] };
+  assert.deepEqual(validateExtraction(wrongTeam, reply).bets, result.bets);
+  assert.throws(() => validateExtraction(wrongTeam, {
+    ...reply, text: 'NIA735 Niagara ML +150.5 x Boston College ML +470 $3000',
+  }), /could not reliably match the team/);
 });
 
 test('sends an image with a bet-ID-only caption as multimodal input, including prediction-market guidance', async () => {
@@ -202,6 +294,9 @@ test('rejects missing keys, malformed or truncated model responses and sanitizes
 test('grades American odds with net profit and cent rounding, including signed PARTRETURN and zero', () => {
   const base = { betId: 'HAN187', game: 'HLE vs BLG', team: 'HLE', bet: 'ML', risk: 500, odds: -110 };
   assert.equal(normalizeFields({ ...base, grade: 'WIN' }).pl, 454.55);
+  const rounded = normalizeFields({ ...base, odds: '-127.5', grade: 'WIN' });
+  assert.equal(rounded.odds, -128);
+  assert.equal(rounded.pl, 390.63);
   assert.equal(normalizeFields({ ...base, odds: 150, grade: 'WIN' }).pl, 750);
   assert.equal(normalizeFields({ ...base, risk: 1, grade: 'WIN' }).pl, 0.91);
   assert.equal(normalizeFields({ ...base, grade: 'LOSS' }).pl, -500);

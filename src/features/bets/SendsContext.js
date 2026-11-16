@@ -32,6 +32,10 @@ export function SendsProvider({ children }) {
     const data = await request('', 'POST', { game: selectedGame, marketIds });
     replace(data.draft); setGame(null); setNotice('Markets saved to Sends.');
   }, [replace]);
+  const addManual = useCallback(async manualText => {
+    const data = await request('', 'POST', { manualText });
+    return replace(data.draft);
+  }, [replace]);
   const save = useCallback(async draft => {
     const data = await request(`/${encodeURIComponent(draft.id)}`, 'PATCH', draft);
     return replace(data.draft);
@@ -44,7 +48,7 @@ export function SendsProvider({ children }) {
     await request(`/${encodeURIComponent(draft.id)}`, 'DELETE', { revision: draft.revision });
     setDrafts(current => current.filter(item => item.id !== draft.id));
   }, []);
-  return <SendsContext.Provider value={{ drafts, openGame, load, save, send, remove }}>
+  return <SendsContext.Provider value={{ drafts, openGame, load, addManual, save, send, remove }}>
     {notice && <div className="sends-notice" role="status">{notice}<a href="#/bets">View Sends →</a><button type="button" aria-label="Dismiss Sends notice" onClick={() => setNotice('')}>×</button></div>}
     {children}
     {game && <MarketPicker game={game} onClose={closeGame} onAdd={add} />}

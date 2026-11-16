@@ -243,6 +243,7 @@ test('payments clear each partner’s settled balance in either direction and su
   await ready();
   await waitFor(() => expect(stat('Owed to partner')).toHaveTextContent('$100.00'));
   expect(stat('Owed to you')).toHaveTextContent('$100.00');
+  expect(stat('Your Share').textContent).toBe('$0.00');
   await choose('Partner A');
   expect(stat('Owed to you')).toHaveTextContent('$0.00');
   await add('Sent', '60.25', 'First transfer');
@@ -250,6 +251,7 @@ test('payments clear each partner’s settled balance in either direction and su
   await add('Sent', '39.75', 'Final transfer');
   expect(stat('Owed to partner')).toHaveTextContent('$0.00');
   expect(stat('Open exposure')).toHaveTextContent('$400.00');
+  expect(stat('Your Share').textContent).toBe('-$100.00');
   await choose('All Partners');
   expect(stat('Owed to you')).toHaveTextContent('$100.00');
   await add('Received', '100', 'Partner B transfer', 'b');
@@ -282,6 +284,7 @@ test('updates all past bets, balances, exposure and the history CSV when the par
   const stat = label => screen.getByText(label, { selector: '.stat-label' }).closest('.stat-card').querySelector('.stat-value');
   expect(stat('Open exposure')).toHaveTextContent('$500.00');
   expect(stat('Owed to you')).toHaveTextContent('$300.00');
+  expect(stat('Your Share').textContent).toBe('$500.00');
 
   fireEvent.click(screen.getByRole('button', { name: 'Edit partner split' }));
   fireEvent.change(screen.getByLabelText('Split (%)'), { target: { value: '10' } });
@@ -317,6 +320,7 @@ test('updates all past bets, balances, exposure and the history CSV when the par
     ]);
     expect(stat('Owed to you')).toHaveTextContent('$1,000.00');
     expect(stat('Owed to partner')).toHaveTextContent('$100.00');
+    expect(stat('Your Share').textContent).toBe('$1,100.00');
   } finally {
     click.mockRestore();
     URL.createObjectURL = create;

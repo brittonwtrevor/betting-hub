@@ -185,6 +185,34 @@ async function readySend(marketIds = ['a:ml', 'match:kills:over:1']) {
   return { service, draft: { ...draft, markets: draft.markets.map(market => ({ ...market, playTo: '+150', line: market.needsLine ? '25.5' : market.line })), notes: 'Line might move', recipients: [{ id: 'sam', name: 'Sam', telegramChannel: '-100123' }] } };
 }
 
+test('manual drafts reserve independent Bet IDs and reuse partner delivery and retry handling', async () => {
+  const db = database();
+  const service = createSendsService({ env, createPool: () => db.pool, numberStart: () => 145 });
+  const manualText = 'Chiefs -3.5\nPlay to -110.';
+  await assert.rejects(service.add({ manualText: '   ' }), /Enter bet instructions/);
+  await assert.rejects(service.add({ manualText: 'X'.repeat(2001) }), /Enter bet instructions/);
+  const draft = await service.add({ manualText });
+  const other = await service.add({ manualText });
+  assert.equal(draft.betId, 'CHI145');
+  assert.equal(other.betId, 'CHI146');
+  assert.deepEqual(draft.game, { sport: 'other' });
+  assert.deepEqual(draft.markets, []);
+  const recipients = [{ id: 'sam', name: 'Sam', telegramChannel: '-100123' }];
+  const edited = await service.update(draft.id, { ...draft, manualText: 'Chiefs -3.5\nPlay to -105.', recipients });
+  const calls = [];
+  const telegram = { async sendMessage(input) { calls.push(input); return { message: { messageId: 42, chatId: '-100123' } }; } };
+  await assert.rejects(service.send(edited.id, { ...edited, manualText: ' ' }, telegram), /Enter bet instructions/);
+  const sent = await service.send(edited.id, edited, telegram);
+  assert.equal(sent.betId, draft.betId);
+  assert.deepEqual(calls, [{ chatId: '-100123', text: 'Bet ID: CHI145\n\nChiefs -3.5\nPlay to -105.' }]);
+  assert.equal(sent.deliveries[0].status, 'sent');
+  await service.send(sent.id, sent, telegram);
+  assert.equal(calls.length, 1);
+  const [linked] = await service.findByBetIds([sent.betId]);
+  assert.equal(linked.context.manualText, edited.manualText);
+  assert.deepEqual(linked.context.recipients, recipients);
+});
+
 test('sending saves edits, formats the bet ID/markets/notes, deduplicates destinations and reloads persisted delivery', async () => {
   const { service, draft } = await readySend();
   const calls = [];

@@ -101,7 +101,7 @@ function fixture(options = {}) {
   } };
   const makeService = () => createConfirmsService({ env: { LOL_DO_DB_HOST: 'test', LOL_DO_DB_USER: 'test', LOL_DO_DB_PASSWORD: 'test', LOL_DO_DB_NAME: 'test' },
     telegramReceiver, parser, partnersService: options.partnersService, createPool: () => pool, now: () => time, makeId: () => `bet-${++nextId}`, logger: { error() {} },
-    sendsService: { async findByBetIds(ids) { return ids.filter(id => ['HAN187', 'BOS145'].includes(id)).map(betId => ({ betId })); } },
+    sendsService: options.sendsService ?? { async findByBetIds(ids) { return ids.filter(id => ['HAN187', 'BOS145'].includes(id)).map(betId => ({ betId })); } },
   });
   return { service: makeService(), makeService, get data() { return data; }, get parseCalls() { return parseCalls; }, trace,
     setFailure(value) { failure = value; }, setMessages(value) { messages = value; }, setConfigured(value) { configured = value; }, setTime(value) { time = new Date(value); } };
@@ -162,6 +162,24 @@ test('existing game totals with blank teams appear in Confirms and reports and c
   assert.equal(graded.team, 'Total Goals');
   assert.equal(graded.bet, 'Over 5.5');
   assert.equal(JSON.parse(stored.payload).team, 'Total Goals');
+});
+
+test('offers the missing legs for a saved single wager when the original parlay terms match', async () => {
+  const f = fixture();
+  await f.service.tick();
+  const [stored] = Object.values(f.data.bets);
+  const fields = JSON.parse(stored.payload);
+  const rawResponse = 'HAN187 Moneyline +470 $3000\nParlay with Niagara -1.5 x Boston College Moneyline';
+  stored.payload = JSON.stringify({ ...fields, rawResponse, risk: 3000, odds: 470, grade: 'WIN', pl: 14100 });
+  const [bet] = (await f.service.list()).sources[0].bets;
+  assert.equal(bet.parlayFromReply, 'Parlay: Hanwha Life Esports Moneyline x Niagara -1.5 x Boston College Moneyline');
+  assert.equal(JSON.parse(stored.payload).bet, 'Moneyline');
+  const edited = await f.service.update(bet.id, { ...bet, bet: bet.parlayFromReply });
+  assert.equal(edited.bet, bet.parlayFromReply);
+  assert.equal(edited.pl, 14100);
+  assert.equal((await f.service.list()).sources[0].bets[0].parlayFromReply, undefined);
+  stored.payload = JSON.stringify({ ...fields, rawResponse, risk: 100, odds: 470 });
+  assert.equal((await f.service.list()).sources[0].bets[0].parlayFromReply, undefined);
 });
 
 test('attribution edits persist in the same row while source identity remains server controlled', async () => {
@@ -378,6 +396,26 @@ test('partner reports read complete fills, reflect grades and omit deleted bets'
   assert.deepEqual((await f.service.listReportBets()).map(bet => bet.id), [first.id]);
   assert.ok((await f.service.listReportBets({ includeIncomplete: true })).every(bet => bet.id !== win.id));
   assert.equal(f.parseCalls, 1);
+});
+
+test('a fill linked to a manual send can be graded and included in partner accounting', async () => {
+  const betId = 'CHI145';
+  const send = { betId, context: { manualText: 'Chiefs -3.5 vs Broncos. Play to -110.',
+    game: { sport: 'other' }, markets: [], recipients: context.recipients } };
+  const f = fixture({
+    sendsService: { async findByBetIds(ids) { return ids.includes(betId) ? [send] : []; } },
+    extraction: { bets: [{ betId, game: 'Chiefs vs Broncos', team: 'Chiefs', bet: 'Chiefs -3.5', risk: 110, odds: -110 }], issues: [] },
+  });
+  f.setMessages([{ ...original, text: `${betId} $110 -110`, betIds: [betId], contexts: [send] }]);
+  await f.service.tick();
+  const [source] = (await f.service.list()).sources;
+  const [bet] = source.bets;
+  assert.equal(source.status, 'parsed');
+  assert.equal(bet.gameAt, null);
+  assert.equal(bet.partnerId, 'trevor');
+  await f.service.update(bet.id, { ...bet, grade: 'WIN' });
+  const [report] = await f.service.listReportBets();
+  assert.deepEqual([report.betId, report.sport, report.settledProfit], [betId, 'other', 100]);
 });
 
 test('partner report applies the current global split to pending and settled historical bets', async () => {

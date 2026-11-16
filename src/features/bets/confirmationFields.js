@@ -14,6 +14,16 @@ function amount(value, signed = false) {
   if (!pattern.test(String(value)) || !Number.isFinite(Number(value)) || Math.abs(Number(value)) > 10000000) throw invalid('Enter a dollar amount with at most two decimal places (maximum $10,000,000).');
   return Math.round(Number(value) * 100) / 100;
 }
+function americanOdds(value) {
+  if (value == null || value === '') return null;
+  const text = String(value);
+  const odds = Number(text);
+  const magnitude = Math.abs(odds);
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(text) || magnitude < 100 || magnitude > 1000000) {
+    throw invalid('Enter American odds of +100 or greater, or -100 or lower.');
+  }
+  return Math.sign(odds) * Math.round(magnitude);
+}
 function normalizeFields(input, sport) {
   if (!input || typeof input !== 'object') throw invalid('Enter the bet details.');
   const result = {};
@@ -26,8 +36,7 @@ function normalizeFields(input, sport) {
   result.team = confirmationTeam(result.team, result.bet, sport);
   result.risk = amount(input.risk);
   if (result.risk !== null && result.risk <= 0) throw invalid('Risk must be greater than zero.');
-  result.odds = input.odds == null || input.odds === '' ? null : Number(input.odds);
-  if (result.odds !== null && (!/^[+-]?\d+$/.test(String(input.odds)) || !Number.isSafeInteger(result.odds) || Math.abs(result.odds) < 100 || Math.abs(result.odds) > 1000000)) throw invalid('Enter American odds of +100 or greater, or -100 or lower.');
+  result.odds = americanOdds(input.odds);
   result.grade = input.grade || 'UNGRADED';
   if (!grades.includes(result.grade)) throw invalid('Choose a valid grade.');
   result.partialReturn = result.grade === 'PARTRETURN' ? amount(input.partialReturn, true) : null;

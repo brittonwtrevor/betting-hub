@@ -38,6 +38,12 @@ beforeEach(() => {
     }
     if (options.method === 'POST') {
       if (failSave) return response({ message: 'Storage unavailable. Try again.' }, false);
+      if (body.manualText) {
+        const draft = { id: 'manual-1', betId: 'CHI145', manualText: body.manualText,
+          game: { sport: 'other' }, markets: [], recipients: [], notes: '', revision: 1, createdAt: new Date().toISOString() };
+        saved = [draft, ...saved];
+        return response({ draft });
+      }
       const markets = allMarkets(body.game).filter(market => body.marketIds.includes(market.id)).map(market => ({ ...market, line: market.line || '', playTo: '' }));
       const existing = saved[0];
       saved = [{ ...(existing || { id: 'draft-1', betId: 'ALP145', game: body.game, markets: [], recipients: [], notes: '', revision: 0 }), revision: (existing?.revision || 0) + 1, markets: [...(existing?.markets || []), ...markets.filter(market => !existing?.markets.some(old => old.id === market.id))] }];
@@ -52,6 +58,32 @@ beforeEach(() => {
   });
 });
 afterEach(() => { delete global.fetch; window.localStorage.clear(); });
+
+test('creates and sends a manual bet with an assigned ID and edited instructions', async () => {
+  window.history.replaceState(null, '', '/#/bets');
+  const user = userEvent.setup();
+  render(<App />);
+  const add = screen.getByRole('button', { name: 'Add manual bet' });
+  await waitFor(() => expect(add).toBeEnabled());
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Sport' }), 'hockey');
+  await user.click(add);
+  const create = screen.getByRole('button', { name: 'Create draft & Bet ID' });
+  expect(create).toBeDisabled();
+  await user.type(screen.getByLabelText('Bet instructions'), 'Chiefs -3.5. Play to -110.');
+  await user.click(create);
+  const card = await screen.findByRole('article', { name: 'Manual bet' });
+  expect(within(card).getByLabelText('Bet ID CHI145')).toHaveTextContent('CHI145');
+  const send = within(card).getByRole('button', { name: 'Send to Telegram' });
+  expect(send).toBeDisabled();
+  const instructions = within(card).getByLabelText('Bet instructions');
+  expect(instructions).toHaveValue('Chiefs -3.5. Play to -110.');
+  fireEvent.change(instructions, { target: { value: 'Chiefs -3.5. Play to -105.' } });
+  await user.click(within(card).getByRole('checkbox', { name: /Sam/ }));
+  await user.click(send);
+  await within(card).findByText('Sent to selected Telegram channels.');
+  expect(saved[0]).toMatchObject({ betId: 'CHI145', manualText: 'Chiefs -3.5. Play to -105.', markets: [],
+    recipients: [{ id: 'sam', telegramChannel: '-100123' }] });
+});
 
 test('filters Sends independently by sport and Eastern game date, with all dates and reset', async () => {
   window.history.replaceState(null, '', '/#/bets');
