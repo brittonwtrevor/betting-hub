@@ -10,6 +10,7 @@ export const navigation = [
   { id: 'suggestions', path: '/suggestions', label: 'Trading Dashboard', icon: 'spark', description: 'Games and markets across your sports.' },
   ...sports.map(({ id, label, icon }) => ({ id: 'sports', sportId: id, path: `/sports/${id}`, label, icon })),
   { id: 'partners', path: '/partners', label: 'Partner Accounting', icon: 'users', description: 'Bet reports, shared exposure, and balances with your partners.' },
+  { id: 'luke', path: '/luke-originator', label: 'Luke Originator', icon: 'wallet', description: 'Luke’s NCAA hockey allocation by Bet ID.' },
   { id: 'analytics', path: '/analytics', label: 'Analytics', icon: 'chart', description: 'Understand your performance, from the full picture to every placement.' },
   { id: 'projects', path: '/project-management', label: 'Project Management', icon: 'checklist', description: 'Create and review project tasks.' },
 ];

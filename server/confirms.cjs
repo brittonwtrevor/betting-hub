@@ -5,6 +5,7 @@ const { fullSplitBps, splitToBps, splitAmount } = require('../src/features/partn
 const { createConfirmParser, eligibleContexts, partnerFor, defaultFields, savedParlayDescription } = require('./confirm-parser.cjs');
 const { recordMetadata, migrateRecords, iso } = require('./confirm-record.cjs');
 const { createConfirmNotifications } = require('./confirm-notifications.cjs');
+const { originalFill } = require('./original-fill.cjs');
 const decode = value => typeof value === 'string' ? JSON.parse(value) : value;
 const fail = (message, status = 400) => Object.assign(new Error(message), { status, confirmSafe: true });
 const sourceId = message => createHash('sha256').update(JSON.stringify([String(message.botId), String(message.chatId), String(message.messageId)])).digest('hex');
@@ -178,16 +179,30 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
       notificationTimer = setInterval(() => { void notificationTick(); }, 10000); notificationTimer.unref?.();
       void tick(); void notificationTick();
     },
-    async listReportBets({ includeIncomplete = false } = {}) {
+    async listReportBets({ includeIncomplete = false, includeOriginal = false } = {}) {
       const db = await database();
       const [[rows], partners] = await Promise.all([db.query(`SELECT b.id, bet_id, partner_id, partner_name, bet_date, bet_at,
         game, team, bet, sport, league, risk, odds, grade, partial_return, pl, graded_at, raw_response,
+        ${includeOriginal ? 'b.payload AS record_payload, b.source_id AS history_source_id,' : ''}
         COALESCE(b.telegram_chat_id, CAST(s.chat_id AS CHAR)) AS telegram_chat_id,
         JSON_UNQUOTE(JSON_EXTRACT(s.payload, '$.message.chatUsername')) AS chat_username
         FROM hub_confirm_bets b LEFT JOIN hub_confirm_sources s ON s.id = b.source_id
         WHERE deleted_at IS NULL${includeIncomplete ? '' : ` AND risk IS NOT NULL AND odds IS NOT NULL
           AND game <> '' AND bet <> ''`}
         ORDER BY bet_date DESC, bet_at DESC, b.id`), partnersService?.list() ?? []]);
+      const historyByBet = new Map();
+      if (includeOriginal) {
+        const ids = [...new Set(rows.filter(row => row.sport === 'hockey' && /^NCAA(?:$|[\s(./-])/i.test(row.league || '')).map(row => row.history_source_id))];
+        for (let offset = 0; offset < ids.length; offset += 100) {
+          const batch = ids.slice(offset, offset + 100);
+          const [history] = await db.execute(`SELECT bet_row_id, payload FROM hub_confirm_history
+            WHERE source_id IN (${batch.map(() => '?').join(', ')}) ORDER BY id`, batch);
+          for (const entry of history) {
+            if (!historyByBet.has(entry.bet_row_id)) historyByBet.set(entry.bet_row_id, []);
+            historyByBet.get(entry.bet_row_id).push(entry);
+          }
+        }
+      }
       const byId = new Map();
       const byChannel = new Map();
       const addUnique = (index, key, partner) => {
@@ -218,6 +233,7 @@ function createConfirmsService({ env = process.env, telegramReceiver, sendsServi
           sport: row.sport, league: row.league, stake, odds: row.odds,
           status: row.grade, partialReturn: row.partial_return === null ? null : Number(row.partial_return),
           settledProfit, gradedAt: row.graded_at, rawResponse: row.raw_response || '',
+          ...(includeOriginal ? originalFill(decode(row.record_payload), historyByBet.get(row.id)) : {}),
           ...reportSplit(splitToBps(partner?.splitPercent) ?? fullSplitBps, stake, settledProfit),
         };
       }).filter(bet => includeIncomplete || bet.team);

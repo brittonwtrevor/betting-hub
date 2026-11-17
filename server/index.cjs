@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService, lukeOriginatorService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -173,6 +173,34 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         if (error.taskSafe) return json(error.status, { message: error.message });
         const message = reading ? 'Unable to load tasks. Try refreshing.' : 'Unable to save the task. Try again.';
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message });
+      }
+    }
+    const lukeRoute = /^\/api\/luke-originator(?:\/settlements\/([A-Z]{3}\d{3}))?$/.exec(pathname);
+    if (lukeRoute) {
+      const betId = lukeRoute[1];
+      const allowed = betId ? ['PATCH'] : ['GET', 'HEAD', 'PATCH'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        if (!lukeOriginatorService) return json(503, { message: 'Luke Originator storage is unavailable.' });
+        if (request.method !== 'PATCH') return json(200, await lukeOriginatorService.report());
+        if (request.headers['x-betting-hub'] !== 'luke-originator' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Luke Originator in Betting Hub to save changes.' });
+        if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Allocation requests require JSON.' });
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of request) {
+          size += Buffer.byteLength(chunk);
+          if (size > 4096) return json(413, { message: 'This allocation request is too large.' });
+          chunks.push(Buffer.from(chunk));
+        }
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        catch { return json(400, { message: 'Invalid allocation JSON.' }); }
+        if (betId) return json(200, { settlement: await lukeOriginatorService.setSettlement(betId, body) });
+        return json(200, { settings: await lukeOriginatorService.save(body) });
+      } catch (error) {
+        if (error.lukeSafe) return json(error.status || 400, { message: error.message });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or save Luke Originator. Try refreshing.' });
       }
     }
     if (pathname === '/api/confirms/bets') {
@@ -333,12 +361,13 @@ if (require.main === module) {
     const telegramService = require('./telegram.cjs').createTelegramService();
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
     const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService, partnersService });
+    const lukeOriginatorService = require('./luke-originator.cjs').createLukeOriginatorService({ confirmsService });
     const handler = createHandler({
       username: process.env.APP_AUTH_USERNAME,
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService,
+      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService, lukeOriginatorService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
@@ -350,7 +379,7 @@ if (require.main === module) {
       server.close();
       await confirmsService.close();
       await telegramReceiver.close();
-      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close(), projectTasksService.close()]);
+      await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close(), projectTasksService.close(), lukeOriginatorService.close()]);
     }
     process.once('SIGTERM', () => { void shutdown(); });
     process.once('SIGINT', () => { void shutdown(); });

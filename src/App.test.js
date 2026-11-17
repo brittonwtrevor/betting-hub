@@ -21,7 +21,7 @@ test('opens Monitoring and reports missing publication timestamps', async () => 
   render(<App />);
   expect(document.title).toBe('Monitoring · Betting Hub');
   const nav = screen.getByRole('navigation', { name: 'Main navigation' });
-  expect(within(nav).getAllByRole('link')).toHaveLength(9);
+  expect(within(nav).getAllByRole('link')).toHaveLength(10);
   expect(within(nav).queryByRole('link', { name: 'Telegram', exact: true })).not.toBeInTheDocument();
   const sources = screen.getByRole('table', { name: 'Source health' });
   expect(within(sources).getAllByText('Not connected')).toHaveLength(5);
@@ -41,6 +41,7 @@ test('supports every workspace and sports deep links, including hash navigation'
   const destinations = [
     ['/bets', 'Active Bets'], ['/suggestions', 'Trading Dashboard'],
     ['/partners', 'Partner Accounting'], ['/analytics', 'Analytics'],
+    ['/luke-originator', 'Luke Originator'],
     ['/project-management', 'Project Management'], ['/', 'Monitoring'],
   ];
   for (const [path, label] of destinations) {

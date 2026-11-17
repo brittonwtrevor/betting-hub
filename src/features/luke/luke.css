@@ -1,0 +1,24 @@
+.luke-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; }
+.luke-heading p { margin-top: 8px; font-size: 12px; color: #111; }
+.luke-allocation { padding: 18px 20px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.luke-allocation label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.luke-allocation > div { display: flex; flex-wrap: wrap; gap: 10px; }
+.luke-settings-fields { align-items: flex-end; }
+.luke-settings-fields label { display: flex; flex-direction: column; gap: 8px; margin-bottom: 0; }
+.luke-settings-fields #luke-risk-win-cap { width: 160px; }
+.luke-allocation input { width: 110px; }
+.luke-allocation input, .luke-filters input[type="date"] { border: 1px solid #d9dfe7; border-radius: 5px; padding: 8px 10px; font: inherit; min-height: 35px; color: #111; background: white; }
+.luke-allocation p { margin-top: 10px; font-size: 12px; line-height: 1.6; color: #111; }
+.luke-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; padding: 0 20px 18px; }
+.luke-filters > label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.luke-table { font-variant-numeric: tabular-nums; font-size: 12px; }
+.luke-table th, .luke-table td { padding: 12px 10px; white-space: nowrap; color: #111; }
+.luke-table th[scope="row"] { background: white; text-align: left; font-size: 12px; }
+.luke-table th[scope="row"] a { color: #285db3; }
+.luke-bet-id { display: flex; align-items: center; gap: 9px; }
+.luke-bet-id input[type="checkbox"] { width: 19px; height: 19px; margin: 0; accent-color: #21853d; cursor: pointer; }
+.luke-bet-id input[type="checkbox"]:disabled { cursor: wait; }
+.luke-table .luke-game { min-width: 200px; max-width: 300px; white-space: normal; line-height: 1.6; }
+.luke-history { display: block; font-size: 11px; color: #775400; }
+.luke-table .luke-profit { color: #1d6538; font-weight: 600; }
+.luke-table .luke-loss { color: #a12626; font-weight: 600; }

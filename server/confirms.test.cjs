@@ -47,9 +47,12 @@ function fixture(options = {}) {
           risk: bet.risk?.toFixed(2) ?? null, odds: bet.odds, grade: bet.grade, league: bet.league,
           partial_return: bet.partialReturn?.toFixed(2) ?? null, pl: bet.pl?.toFixed(2) ?? null, graded_at: bet.gradedAt,
           raw_response: bet.rawResponse, telegram_chat_id: bet.telegramChatId,
+          record_payload: row.payload,
+          history_source_id: row.source_id,
           chat_username: JSON.parse(data.sources[row.source_id].payload).message.chatUsername }];
       })];
     }
+    else if (sql.startsWith('SELECT bet_row_id, payload FROM hub_confirm_history')) return [data.audit.filter(entry => p.includes(entry[0])).map(entry => ({ bet_row_id: entry[1], payload: entry[4] }))];
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id IN')) return [Object.values(data.bets).filter(row => p.includes(row.source_id)).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE source_id')) return [Object.values(data.bets).filter(row => row.source_id === p[0]).map(copy)];
     else if (sql.startsWith('SELECT * FROM hub_confirm_bets WHERE id')) return [[data.bets[p[0]]].filter(Boolean).map(copy)];
@@ -447,6 +450,44 @@ test('partner report applies the current global split to pending and settled his
   assert.equal((await f.service.listReportBets())[0].yourShare, 8.76);
   splitPercent = 0;
   assert.ok((await f.service.listReportBets()).every(bet => bet.yourRisk === 0));
+});
+
+test('Luke report preserves the original fill basis through voids and resettlements while reading current Confirms P/L', async () => {
+  const { lukeRows } = require('../src/features/luke/lukeAllocation');
+  let splitPercent = 50;
+  const gameContext = { ...context, game: { ...context.game, sport: 'hockey', league: 'NCAA (men’s)' } };
+  const f = fixture({ extraction: { bets: [{ ...extraction.bets[0], risk: 10000, odds: -200 }], issues: [] },
+    partnersService: { async list() { return [{ id: 'trevor', name: 'Trevor', splitPercent }]; } },
+    sendsService: { async findByBetIds() { return [{ betId: 'HAN187', context: gameContext }]; } } });
+  f.setMessages([{ ...original, contexts: [{ betId: 'HAN187', context: gameContext }] }]);
+  await f.service.tick();
+  const [bet] = (await f.service.list()).sources[0].bets;
+  const voided = await f.service.update(bet.id, { ...bet, grade: 'VOID', risk: 500, odds: 100 });
+  let [reported] = await f.service.listReportBets({ includeOriginal: true, includeIncomplete: true });
+  assert.equal(reported.originalStake, 10000);
+  assert.equal(reported.originalOdds, -200);
+  assert.equal(reported.settledProfit, 0);
+  assert.equal(reported.stake, 500);
+  assert.equal(lukeRows([reported])[0].lukeRisk, 2250);
+  assert.equal(lukeRows([reported])[0].lukeProfit, 0);
+  await f.service.update(bet.id, { ...voided, grade: 'PARTRETURN', partialReturn: 1250 });
+  [reported] = await f.makeService().listReportBets({ includeOriginal: true, includeIncomplete: true });
+  assert.equal(reported.originalStake, 10000);
+  assert.equal(reported.originalOdds, -200);
+  assert.equal(reported.originalFromHistory, true);
+  assert.equal(reported.settledProfit, 1250);
+  assert.equal(reported.splitPercent, 50);
+  const [row] = lukeRows([reported]);
+  assert.equal(row.totalAmount, 5000);
+  assert.equal(row.confirmsProfit, 625);
+  assert.equal(row.lukeRisk, 2250);
+  assert.equal(row.lukeProfit, 281.25);
+  splitPercent = 25;
+  const [updated] = lukeRows(await f.service.listReportBets({ includeOriginal: true, includeIncomplete: true }));
+  assert.equal(updated.totalAmount, 2500);
+  assert.equal(updated.confirmsProfit, 312.5);
+  assert.equal(updated.lukeRisk, 1125);
+  assert.equal(updated.lukeProfit, 140.63);
 });
 
 test('orphaned send IDs and Telegram fallback IDs use the saved partner’s chat identity in reports', async () => {
