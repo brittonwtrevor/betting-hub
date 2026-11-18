@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Badge, EmptyState, Panel, SearchField } from '../../components/ui';
+import { Badge, EmptyState, Panel, SearchField, SelectField } from '../../components/ui';
 import { parseDate } from '../sports/lol/upcoming';
 import BetFilters, { defaultBetDates, easternBetDay, matchesBetDates, newestDateFirst, sportLabel } from './BetFilters';
 import { calculatePL, grades } from './confirmationFields';
@@ -8,26 +8,27 @@ import { formatOdds } from './markets';
 const eastern = value => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) : '—';
 const money = value => value == null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', signDisplay: 'exceptZero' }).format(value);
 const receiptStatuses = { pending: 'Queued', sending: 'Sending', sent: 'Sent', error: 'Delivery failed', uncertain: 'Delivery unconfirmed', cancelled: 'Cancelled' };
+const gradeOptions = [{ value: 'all', label: 'All statuses' }, ...grades.map(grade => ({ value: grade, label: grade === 'UNGRADED' ? 'Ungraded' : grade }))];
 function betDateKey(bet, message) {
   const time = parseDate(bet?.betAt) || parseDate(message.date) || parseDate(message.receivedAt);
   const day = /^\d{4}-\d{2}-\d{2}$/.test(bet?.betDate) ? bet.betDate : easternBetDay(time);
   return day ? `${day} ${time?.toISOString() || ''}` : '';
 }
 
-function filterReplies(sources, sport, dates) {
+function filterReplies(sources, sport, dates, grade) {
   const days = new Set();
   const filtered = sources.flatMap(source => {
     if (!source.bets.length) {
       const date = betDateKey(null, source.message);
       days.add(date.slice(0, 10));
-      return (sport === 'all' || source.sports?.includes(sport)) && matchesBetDates(date.slice(0, 10), dates)
+      return grade === 'all' && (sport === 'all' || source.sports?.includes(sport)) && matchesBetDates(date.slice(0, 10), dates)
         ? [{ ...source, orderDate: date }] : [];
     }
     const matching = source.bets.map(bet => ({ bet, date: betDateKey(bet, source.message) }))
       .filter(({ bet, date }) => {
         const day = date.slice(0, 10);
         days.add(day);
-        return (sport === 'all' || bet.sport === sport) && matchesBetDates(day, dates);
+        return (grade === 'all' || bet.grade === grade) && (sport === 'all' || bet.sport === sport) && matchesBetDates(day, dates);
       }).sort((a, b) => newestDateFirst(a.date, b.date));
     return matching.length ? [{ ...source, bets: matching.map(({ bet }) => bet), orderDate: matching[0].date }] : [];
   });
@@ -139,7 +140,7 @@ function ConfirmationReply({ source, betId, busySource, canRetry, onAction }) {
 
 export default function ConfirmsInbox({ filters, onFiltersChange }) {
   const [query, setQuery] = useState('');
-  const [localFilters, setLocalFilters] = useState({ sport: 'all', dates: null });
+  const [localFilters, setLocalFilters] = useState({ sport: 'all', dates: null, grade: 'all' });
   const [inbox, setInbox] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -210,7 +211,7 @@ export default function ConfirmsInbox({ filters, onFiltersChange }) {
   const selection = filters ?? localFilters;
   const setFilters = onFiltersChange || setLocalFilters;
   const defaults = defaultBetDates(true);
-  const { days, sources: datedSources } = filterReplies(inbox?.sources || [], selection.sport, selection.dates ?? defaults);
+  const { days, sources: datedSources } = filterReplies(inbox?.sources || [], selection.sport, selection.dates ?? defaults, selection.grade ?? 'all');
   const sources = datedSources.filter(source => [source.message.text, source.message.chat, source.message.from, source.partner?.name,
     ...source.bets.flatMap(bet => [bet.betId, bet.game, bet.team, bet.bet, bet.grade, bet.partnerName, bet.bettorName, bet.betDate, bet.telegramSenderUsername, bet.rawResponse]), ...(source.message.betIds || [])].join(' ').toLowerCase().includes(search));
   const groups = groupByBetId(sources);
@@ -218,6 +219,7 @@ export default function ConfirmsInbox({ filters, onFiltersChange }) {
     action={<button type="button" className="button button-secondary" disabled={refreshing} onClick={() => refresh.current()}>{refreshing ? 'Refreshing…' : 'Refresh replies'}</button>}>
     <div className="confirms-controls"><div className="confirms-receiver"><Badge tone={pollFresh && !error && !receiver?.error && receiver?.enabled !== false ? 'success' : 'neutral'}>{status}</Badge><span>Last Telegram check: {eastern(receiver?.lastPolledAt)} ET</span></div>
       <div className="confirms-filters"><SearchField label="Search saved replies" value={query} onChange={setQuery} placeholder="Bet ID, partner, game, or message…" />
+        <SelectField label="Bet status" value={selection.grade ?? 'all'} onChange={grade => setFilters({ ...selection, grade })} options={gradeOptions} />
         <BetFilters sport={selection.sport} onSportChange={sport => setFilters({ ...selection, sport })}
           dates={selection.dates} onDatesChange={dates => setFilters({ ...selection, dates })}
           defaults={defaults} defaultLabel="Last 7 days" dateLabel="Bet dates" days={days} />
@@ -242,7 +244,7 @@ export default function ConfirmsInbox({ filters, onFiltersChange }) {
         </details>
       </article>;
     })}
-    {!loading && !sources.length && !error && <EmptyState compact title={search || inbox?.sources.length ? 'No matching replies' : 'No bet replies received yet'} description={search || inbox?.sources.length ? 'Change the search, sport, or date range to see more replies.' : 'Partner messages containing a recognized six-character Bet ID will appear here.'} />}
+    {!loading && !sources.length && !error && <EmptyState compact title={search || inbox?.sources.length ? 'No matching replies' : 'No bet replies received yet'} description={search || inbox?.sources.length ? 'Change the search, bet status, sport, or date range to see more replies.' : 'Partner messages containing a recognized six-character Bet ID will appear here.'} />}
     <p className="confirms-note">Refreshes every 10 seconds. WIN records profit excluding stake; LOSS subtracts risk; VOID is $0. PARTRETURN uses your signed net P/L (+50 profit, -25 loss). Changes apply when you save. Raw replies and edit history are preserved.</p>
   </Panel>;
 }

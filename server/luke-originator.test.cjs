@@ -140,9 +140,9 @@ test('saves allocation durably with revision checks and applies the Confirms par
   const stored = { allocation_bps: 4500, risk_win_cap_cents: 300000, revision: 1 };
   const pool = {
     async query(sql) { return sql.startsWith('SELECT') ? [[{ ...stored }]] : [[]]; },
-    async execute(sql, [bps, capCents, revision]) {
+    async execute(sql, [bps, revision]) {
       if (revision !== stored.revision) return [{ affectedRows: 0 }];
-      stored.allocation_bps = bps; stored.risk_win_cap_cents = capCents; stored.revision++;
+      stored.allocation_bps = bps; stored.revision++;
       return [{ affectedRows: 1 }];
     }, async end() {},
   };
@@ -153,10 +153,10 @@ test('saves allocation durably with revision checks and applies the Confirms par
   const make = () => createLukeOriginatorService({ env: { LOL_DO_DB_HOST: 'test', LOL_DO_DB_USER: 'test', LOL_DO_DB_PASSWORD: 'test', LOL_DO_DB_NAME: 'test' }, createPool: () => pool, confirmsService });
   assert.equal((await make().report()).rows[0].lukeRisk, 2250);
   assert.equal((await make().report()).settings.riskWinCap, 3000);
-  await make().save({ allocationPercent: '45', riskWinCap: '2000', revision: 1 });
+  await make().save({ allocationPercent: '40', revision: 1 });
   const report = await make().report();
-  assert.equal(report.settings.allocationPercent, 45);
-  assert.equal(report.settings.riskWinCap, 2000);
+  assert.equal(report.settings.allocationPercent, 40);
+  assert.equal(report.settings.riskWinCap, 3000);
   assert.equal(report.rows[0].lukeRisk, 2000);
   assert.equal(report.rows[0].lukeProfit, 3000);
   assert.equal(report.rows[0].totalAmount, 5000);
@@ -164,9 +164,6 @@ test('saves allocation durably with revision checks and applies the Confirms par
   await assert.rejects(make().save({ allocationPercent: '20', riskWinCap: '2000', revision: 1 }), error => error.status === 409);
   for (const value of ['', null, 'abc', '-1', '100.01', '2.123']) {
     await assert.rejects(make().save({ allocationPercent: value, riskWinCap: '2000', revision: 2 }), /allocation/);
-  }
-  for (const value of ['', null, true, 'abc', '-1', '0', '10000000.01', '2.123']) {
-    await assert.rejects(make().save({ allocationPercent: 45, riskWinCap: value, revision: 2 }), /cap/);
   }
 });
 
@@ -193,6 +190,7 @@ test('settlement checks persist across service restarts independently of grades 
     async query(sql) {
       if (sql.startsWith('SHOW')) return [[{ Field: 'risk_win_cap_cents' }]];
       if (sql.startsWith('SELECT allocation_bps')) return [[{ allocation_bps: 4500, risk_win_cap_cents: 300000, revision: 1 }]];
+      if (sql.includes('FROM hub_luke_bet_caps')) return [[]];
       if (sql.startsWith('SELECT bet_id')) return [[...saved.values()].map(row => ({ ...row }))];
       return [[]];
     },
@@ -226,4 +224,59 @@ test('settlement checks persist across service restarts independently of grades 
   assert.equal((await make().report()).rows.find(row => row.betId === 'HAR561').settledWithLuke, false);
   await assert.rejects(make().setSettlement('HAR561', { settledWithLuke: true, settlementRevision: 1 }), error => error.status === 409);
   await assert.rejects(make().setSettlement('HAR561', { settledWithLuke: 'true', settlementRevision: 2 }), /Refresh/);
+});
+
+test('stores each Bet ID cap independently, restores it after restart, and recalculates only that bet', async () => {
+  const caps = new Map();
+  const pool = {
+    async query(sql) {
+      if (sql.startsWith('SHOW')) return [[{ Field: 'risk_win_cap_cents' }]];
+      if (sql.startsWith('SELECT allocation_bps')) return [[{ allocation_bps: 4500, risk_win_cap_cents: 300000, revision: 1 }]];
+      if (sql.includes('FROM hub_luke_bet_caps')) return [[...caps.values()].map(row => ({ ...row }))];
+      if (sql.includes('FROM hub_luke_settlements')) return [[{ bet_id: 'HAR561', settled: 1, revision: 3 }]];
+      return [[]];
+    },
+    async execute(sql, values) {
+      if (sql.startsWith('INSERT')) {
+        const [bet_id, risk_win_cap_cents] = values;
+        if (caps.has(bet_id)) throw Object.assign(new Error('Duplicate'), { code: 'ER_DUP_ENTRY' });
+        caps.set(bet_id, { bet_id, risk_win_cap_cents, revision: 1 });
+      } else {
+        const [risk_win_cap_cents, bet_id, revision] = values;
+        if (caps.get(bet_id)?.revision !== revision) return [{ affectedRows: 0 }];
+        caps.set(bet_id, { bet_id, risk_win_cap_cents, revision: revision + 1 });
+      }
+      return [{ affectedRows: 1 }];
+    }, async end() {},
+  };
+  const make = () => createLukeOriginatorService({ env: { LOL_DO_DB_HOST: 'test', LOL_DO_DB_USER: 'test', LOL_DO_DB_PASSWORD: 'test', LOL_DO_DB_NAME: 'test' },
+    createPool: () => pool, confirmsService: { async listReportBets() { return [
+      fill({ originalStake: 20000, originalOdds: 100, splitPercent: 50, settledProfit: 20000 }),
+      fill({ betId: 'BOS145', originalStake: 20000, originalOdds: -200, splitPercent: 50, settledProfit: 10000 }),
+    ]; } } });
+  assert.ok((await make().report()).rows.every(row => row.riskWinCap === 3000 && row.capRevision === 0));
+  const changed = await make().setCap('HAR561', { riskWinCap: '2000', capRevision: 0 });
+  assert.equal(changed.lukeRisk, 2000);
+  assert.equal(changed.lukeProfit, 2000);
+  assert.equal(changed.capRevision, 1);
+  assert.equal(changed.settledWithLuke, true);
+  assert.equal(changed.settlementRevision, 3);
+  let report = await make().report();
+  const other = report.rows.find(row => row.betId === 'BOS145');
+  assert.equal(other.riskWinCap, 3000);
+  assert.equal(other.lukeRisk, 4500);
+  assert.equal(other.lukeProfit, 2250);
+  const favorite = await make().setCap('BOS145', { riskWinCap: '1500', capRevision: 0 });
+  assert.equal(favorite.lukeRisk, 3000);
+  assert.equal(favorite.lukeProfit, 1500);
+  const updated = await make().setCap('HAR561', { riskWinCap: '2500', capRevision: 1 });
+  assert.equal(updated.lukeRisk, 2500);
+  report = await make().report();
+  assert.equal(report.rows.find(row => row.betId === 'HAR561').riskWinCap, 2500);
+  assert.equal(report.rows.find(row => row.betId === 'BOS145').riskWinCap, 1500);
+  await assert.rejects(make().setCap('HAR561', { riskWinCap: 3000, capRevision: 0 }), error => error.status === 409);
+  await assert.rejects(make().setCap('HAR561', { riskWinCap: 3000, capRevision: 1 }), error => error.status === 409);
+  for (const value of ['', null, true, 'abc', '-1', '0', '10000000.01', '2.123']) {
+    await assert.rejects(make().setCap('HAR561', { riskWinCap: value, capRevision: 2 }), /cap/);
+  }
 });

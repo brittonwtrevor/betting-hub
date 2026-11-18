@@ -130,7 +130,7 @@ test('imports, parses, and persists multiple bets once across repeated reads and
   assert.equal(Object.keys(f.data.receipts).length, 2);
   const receipt = Object.values(f.data.receipts)[0];
   assert.equal(receipt.chat_id, '-5550868176');
-  assert.match(JSON.parse(receipt.payload).text, /was logged\./);
+  assert.match(JSON.parse(receipt.payload).text, /was logged 🎯$/);
   await f.service.tick();
   await f.makeService().tick();
   assert.equal(f.parseCalls, 1);

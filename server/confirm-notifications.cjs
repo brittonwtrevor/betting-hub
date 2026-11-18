@@ -17,7 +17,7 @@ function notificationText(kind, bet) {
     const emoji = bet.grade === 'WIN' ? ' ✅' : bet.grade === 'LOSS' ? ' ❌' : '';
     return `${description}, was graded ${bet.grade} with net P/L of ${pl}.${emoji}`;
   }
-  return `${description}, was logged${bet.complete ? '' : '; some details need review in Confirms'}.`;
+  return `${description}, was logged${bet.complete ? '' : '; some details need review in Confirms'} 🎯`;
 }
 
 function createConfirmNotifications({ telegramService, now = () => new Date(), logger = console } = {}) {

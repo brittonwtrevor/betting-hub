@@ -11,7 +11,7 @@ function capToCents(value) {
   return cents(Number(value));
 }
 
-function lukeRows(bets, allocationPercent = 45, riskWinCap = 3000) {
+function lukeRows(bets, allocationPercent = 45, riskWinCap = 3000, betCaps = new Map()) {
   const bps = splitToBps(allocationPercent);
   if (bps == null) throw new Error('Enter an allocation from 0% to 100% with up to two decimal places.');
   const capCents = capToCents(riskWinCap);
@@ -24,6 +24,8 @@ function lukeRows(bets, allocationPercent = 45, riskWinCap = 3000) {
     groups.get(bet.betId).push(bet);
   }
   return [...groups].map(([betId, fills]) => {
+    const betCapCents = betCaps.has(betId) ? capToCents(betCaps.get(betId)) : capCents;
+    if (betCapCents == null) throw new Error('Enter a valid risk / to-win cap for this Bet ID.');
     let amountCents = 0, weightedOdds = 0, profitCents = 0, openCents = 0;
     let missingOriginal = 0, missingProfit = 0, openFills = 0, missingHistory = 0;
     for (const fill of fills) {
@@ -41,7 +43,7 @@ function lukeRows(bets, allocationPercent = 45, riskWinCap = 3000) {
     }
     const totalAmount = !missingOriginal ? amountCents / 100 : null;
     const pregameOdds = totalAmount > 0 ? weightedOdds / amountCents : null;
-    const cap = pregameOdds != null ? pregameOdds > 2 ? capCents / 100 : capCents / 100 / (pregameOdds - 1) : null;
+    const cap = pregameOdds != null ? pregameOdds > 2 ? betCapCents / 100 : betCapCents / 100 / (pregameOdds - 1) : null;
     const risk = totalAmount == null ? null : totalAmount === 0 ? 0 : cents(Math.min(totalAmount * bps / 10000, cap)) / 100;
     const confirmsProfit = missingProfit ? null : profitCents / 100;
     const lukeProfit = risk == null || confirmsProfit == null ? null : totalAmount === 0 ? 0 : cents(risk * confirmsProfit / totalAmount) / 100;
@@ -51,7 +53,7 @@ function lukeRows(bets, allocationPercent = 45, riskWinCap = 3000) {
       selections: [...new Set(fills.map(fill => fill.selection).filter(Boolean))].join(' · '),
       firstFillDate: dates[0] || '', fills: fills.length, openFills,
       status: missingOriginal || missingProfit || missingHistory ? 'Needs review' : openFills === fills.length ? 'Open' : openFills ? 'Partially settled' : 'Settled',
-      totalAmount, pregameOdds, allocationPercent: bps / 100, riskWinCap: capCents / 100, cap,
+      totalAmount, pregameOdds, allocationPercent: bps / 100, riskWinCap: betCapCents / 100, cap,
       lukeRisk: risk,
       openRisk: risk == null ? null : totalAmount === 0 ? 0 : cents(risk * openCents / amountCents) / 100,
       confirmsProfit, settledOdds: openFills || confirmsProfit == null || !(totalAmount > 0) ? null : 1 + confirmsProfit / totalAmount,

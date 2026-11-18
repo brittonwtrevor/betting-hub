@@ -37,7 +37,7 @@ function fixture() {
 
 test('receipts use compact bet details and outcome emojis without repeating chat context', () => {
   assert.equal(notificationText('logged', { ...bet, partnerName: 'trevor_partner', risk: 100 }),
-    'Hanwha Life Esports Moneyline, risking $100.00 at -110, was logged.');
+    'Hanwha Life Esports Moneyline, risking $100.00 at -110, was logged 🎯');
   for (const kind of ['logged', 'grade', 'delete']) assert.doesNotMatch(notificationText(kind, bet), /\n|Bettor|Luke|Trevor|HAN187|Bilibili|2026-11-04/);
   assert.match(notificationText('grade', bet), /was graded WIN with net P\/L of \+\$454.55\. ✅$/);
   assert.equal(notificationText('grade', { ...bet, risk: 1, grade: 'LOSS', pl: -1 }),
@@ -50,7 +50,7 @@ test('receipts use compact bet details and outcome emojis without repeating chat
   assert.equal(notificationText('grade', { ...bet, betId: 'GEN336', game: 'Gen.G vs LYON', team: 'Gen.G', bet: 'Map 1', risk: 250, odds: 100, partnerName: 'trevor_partner', grade: 'VOID', pl: 0 }),
     'Gen.G Map 1, risking $250.00 at +100, was graded VOID with net P/L of $0.00.');
   assert.match(notificationText('logged', { ...bet, complete: false, risk: null, odds: null }), /Not provided/);
-  assert.match(notificationText('logged', { ...bet, complete: false }), /some details need review in Confirms/);
+  assert.match(notificationText('logged', { ...bet, complete: false }), /some details need review in Confirms 🎯$/);
   assert.equal(notificationText('delete', { ...bet, team: 'Gen.G', bet: 'Map 1', risk: 250, odds: 100 }),
     'Gen.G Map 1, risking $250.00 at +100, was deleted from the bet log. 🗑');
   assert.doesNotMatch(notificationText('delete', bet), /\n|Bettor|Luke|graded/);
@@ -66,7 +66,7 @@ test('one receipt per saved revision sends to the original bot/chat and survives
   assert.equal(f.sent.length, 2);
   assert.equal(f.sent[0].chatId, '-5550868176');
   assert.equal(f.sent[0].expectedBotId, '1');
-  assert.match(f.sent[0].text, /was logged\./);
+  assert.match(f.sent[0].text, /was logged 🎯$/);
   assert.match(f.sent[1].text, /was graded WIN/);
   assert.ok(Object.values(f.jobs).every(job => job.status === 'sent'));
 });

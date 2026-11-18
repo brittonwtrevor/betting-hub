@@ -55,3 +55,20 @@ test('routes persistent settlement checks by Bet ID with the same authentication
   assert.deepEqual(calls, [['HAR561', options.body]]);
   assert.equal(JSON.parse(result.body).settlement.settledWithLuke, true);
 });
+
+test('routes each Bet ID cap through authenticated same-site JSON without updating global settings', async () => {
+  const calls = [];
+  const request = fixture({ async setCap(betId, body) { calls.push([betId, body]); return { betId, riskWinCap: Number(body.riskWinCap), lukeRisk: 2000 }; },
+    async save() { throw new Error('Unexpected global update'); } });
+  const options = { url: '/api/luke-originator/caps/HAR561', method: 'PATCH', body: { riskWinCap: '2000', capRevision: 0 } };
+  assert.equal((await request({ ...options, method: 'GET' })).status, 405);
+  for (const [headers, status] of [[{ authorization: '' }, 401], [{ 'x-betting-hub': '' }, 403],
+    [{ 'sec-fetch-site': 'cross-site' }, 403], [{ 'content-type': 'text/plain' }, 415]]) {
+    assert.equal((await request({ ...options, headers })).status, status);
+  }
+  assert.equal(calls.length, 0);
+  const result = await request(options);
+  assert.equal(result.status, 200);
+  assert.deepEqual(calls, [['HAR561', options.body]]);
+  assert.equal(JSON.parse(result.body).row.riskWinCap, 2000);
+});

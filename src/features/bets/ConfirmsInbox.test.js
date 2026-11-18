@@ -179,6 +179,51 @@ test('defaults to seven Eastern dates, filters individual bets by sport, and exp
   expect(rowOrder()).toEqual(['mixed-hockey', 'bet-12', 'bet-11']);
 });
 
+test('filters individual fills by bet status together with sport, dates and search', async () => {
+  const statuses = ['UNGRADED', 'VOID', 'WIN', 'LOSS', 'PARTRETURN'];
+  stored.sources[0].bets = statuses.map(grade => ({ ...base, id: `graded-${grade}`, grade, sport: 'hockey', partialReturn: -0.25 }));
+  stored.sources[0].bets.push(
+    { ...base, id: 'other-sport-win', sport: 'lol', grade: 'WIN', betId: 'BOS145' },
+    { ...base, id: 'older-win', sport: 'hockey', grade: 'WIN', betDate: relativeDay(-8) },
+  );
+  stored.sources.push({ ...stored.sources[0], id: 'pending-reply', status: 'pending', sports: ['hockey'],
+    eligibleBetIds: ['NIA735'], message: { ...reply, betIds: ['NIA735'] }, bets: [] });
+  render(<ConfirmsInbox />);
+  await screen.findByLabelText('Bet ID for graded-UNGRADED');
+  const statusFilter = screen.getByRole('combobox', { name: 'Bet status' });
+  expect(statusFilter).toHaveValue('all');
+  expect(within(statusFilter).getAllByRole('option').map(option => option.value)).toEqual(['all', ...statuses]);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Sport' }), { target: { value: 'hockey' } });
+  expect(screen.getByRole('article', { name: 'Bet ID NIA735' })).toBeInTheDocument();
+  for (const grade of statuses) {
+    fireEvent.change(statusFilter, { target: { value: grade } });
+    expect(screen.getAllByLabelText(/^Bet ID for /).map(item => item.getAttribute('aria-label'))).toEqual([`Bet ID for graded-${grade}`]);
+    expect(screen.queryByRole('article', { name: 'Bet ID NIA735' })).not.toBeInTheDocument();
+  }
+  fireEvent.change(statusFilter, { target: { value: 'WIN' } });
+  fireEvent.click(screen.getByText('Bet dates (ET) · Last 7 days'));
+  fireEvent.click(screen.getByRole('button', { name: 'All dates' }));
+  expect(screen.getByLabelText('Bet ID for older-win')).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved replies' }), { target: { value: 'no such bet' } });
+  expect(screen.getByText('No matching replies')).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search saved replies' }), { target: { value: '' } });
+  fireEvent.change(statusFilter, { target: { value: 'all' } });
+  expect(screen.getAllByLabelText(/^Bet ID for /)).toHaveLength(6);
+  expect(screen.getByRole('article', { name: 'Bet ID NIA735' })).toBeInTheDocument();
+});
+
+test('a saved grade change moves the bet out of the active status filter', async () => {
+  render(<ConfirmsInbox />);
+  await screen.findByLabelText('Bet ID for bet-1');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Bet status' }), { target: { value: 'UNGRADED' } });
+  fireEvent.change(screen.getByLabelText('Grade for bet-1'), { target: { value: 'WIN' } });
+  expect(screen.getByLabelText('Bet ID for bet-1')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Save', exact: true }));
+  await waitFor(() => expect(screen.queryByLabelText('Bet ID for bet-1')).not.toBeInTheDocument());
+  fireEvent.change(screen.getByRole('combobox', { name: 'Bet status' }), { target: { value: 'WIN' } });
+  expect(screen.getByLabelText('Bet ID for bet-1')).toBeInTheDocument();
+});
+
 test('edits wager fields, saves a WIN and persists net P/L', async () => {
   render(<ConfirmsInbox />); await screen.findByLabelText('Bet ID for bet-1');
   for (const [label, value] of [['Team', 'Other team'], ['Bet', 'Spread -1.5'], ['Risk', '500'], ['Odds', '+150']]) fireEvent.change(screen.getByLabelText(`${label} for bet-1`), { target: { value } });

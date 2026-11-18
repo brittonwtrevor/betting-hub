@@ -26,6 +26,8 @@ test('uses the inexpensive DigitalOcean model and sends only reply plus compact 
   assert.equal(calls[0].input.headers.Authorization, 'Bearer test-secret');
   const body = JSON.parse(calls[0].input.body);
   assert.equal(body.temperature, 0);
+  assert.match(body.messages[0].content, /ODE337 Odense ML\/U6\.5 \$230 \+210/);
+  assert.match(body.messages[0].content, /Do not merge separately priced or staked fills/);
   assert.doesNotMatch(calls[0].input.body, /test-secret|5550868176|trevor_partner|recipients|playTo/);
 });
 
@@ -206,6 +208,48 @@ test('parses the Niagara reply as one cross-game parlay with its linked team, co
   assert.throws(() => validateExtraction(wrongTeam, {
     ...reply, text: 'NIA735 Niagara ML +150.5 x Boston College ML +470 $3000',
   }), /could not reliably match the team/);
+});
+
+test('parses a hockey ML/total reply as one same-game parlay with combined risk and odds', async () => {
+  const reply = { ...message, betIds: ['ODE337'], contexts: [{ betId: 'ODE337', context: { ...context,
+    game: { sport: 'hockey', team_a: 'Herning Blue Fox', team_b: 'Odense Bulldogs' },
+    markets: [{ id: 'b:ml', label: 'Odense ML' }, { id: 'match:total:under:6.5', label: 'Under 6.5 goals' }],
+  } }] };
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => {
+    assert.fail('A complete ML/total shorthand can be read directly from the reply');
+  } });
+  for (const [text, total] of [
+    ['ODE337 Odense ML/U6.5 $230 +210', 'Under 6.5'],
+    ['ODE337\nOdense moneyline / Under 6.5 goals +210 $230', 'Under 6.5'],
+    ['ODE337 Odense ML / u 6.5 $230 210', 'Under 6.5'],
+    ['ODE337 Odense ML/O5.5 $230 +210', 'Over 5.5'],
+  ]) {
+    const result = await parser.parse({ ...reply, text });
+    assert.deepEqual(result.bets, [normalizeFields({ betId: 'ODE337', game: 'Herning Blue Fox vs Odense Bulldogs',
+      team: 'Odense Bulldogs', bet: `Same-game parlay: Odense ML x ${total} goals`, risk: 230, odds: 210 }, 'hockey')]);
+    assert.deepEqual(result.issues, []);
+    // An extraction containing separate legs must still resolve to the single reported wager.
+    const split = { bets: [
+      { betId: 'ODE337', team: 'Odense Bulldogs', bet: 'Moneyline', risk: 230, odds: 210 },
+      { betId: 'ODE337', team: 'Total Goals', bet: `${total} goals`, risk: 230, odds: 210 },
+    ], issues: [] };
+    assert.deepEqual(validateExtraction(split, { ...reply, text }).bets, result.bets);
+  }
+});
+
+test('keeps separately priced or staked ML and total fills separate', async () => {
+  const reply = { ...message, text: 'ODE337 Odense ML -110 $100 / U6.5 -120 $130', betIds: ['ODE337'],
+    contexts: [{ betId: 'ODE337', context: { ...context,
+      game: { sport: 'hockey', team_a: 'Odense Bulldogs', team_b: 'Herning Blue Fox' },
+    } }] };
+  const fills = { bets: [
+    { betId: 'ODE337', team: 'Odense Bulldogs', bet: 'Moneyline', risk: 100, odds: -110 },
+    { betId: 'ODE337', team: 'Total Goals', bet: 'Under 6.5 goals', risk: 130, odds: -120 },
+  ], issues: [] };
+  const parser = createConfirmParser({ env: { DO_INFERENCE_API_KEY: 'test-secret' }, fetchImpl: async () => response(fills) });
+  const result = await parser.parse(reply);
+  assert.equal(result.bets.length, 2);
+  assert.deepEqual(result.bets.map(({ bet, risk, odds }) => ({ bet, risk, odds })), fills.bets.map(({ bet, risk, odds }) => ({ bet, risk, odds })));
 });
 
 test('sends an image with a bet-ID-only caption as multimodal input, including prediction-market guidance', async () => {

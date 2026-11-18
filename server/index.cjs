@@ -175,9 +175,10 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message });
       }
     }
-    const lukeRoute = /^\/api\/luke-originator(?:\/settlements\/([A-Z]{3}\d{3}))?$/.exec(pathname);
+    const lukeRoute = /^\/api\/luke-originator(?:\/(settlements|caps)\/([A-Z]{3}\d{3}))?$/.exec(pathname);
     if (lukeRoute) {
-      const betId = lukeRoute[1];
+      const action = lukeRoute[1];
+      const betId = lukeRoute[2];
       const allowed = betId ? ['PATCH'] : ['GET', 'HEAD', 'PATCH'];
       if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
       const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
@@ -196,7 +197,8 @@ function createHandler({ username, password, directory, requireHttps = true, upc
         let body;
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { return json(400, { message: 'Invalid allocation JSON.' }); }
-        if (betId) return json(200, { settlement: await lukeOriginatorService.setSettlement(betId, body) });
+        if (action === 'caps') return json(200, { row: await lukeOriginatorService.setCap(betId, body) });
+        if (action === 'settlements') return json(200, { settlement: await lukeOriginatorService.setSettlement(betId, body) });
         return json(200, { settings: await lukeOriginatorService.save(body) });
       } catch (error) {
         if (error.lukeSafe) return json(error.status || 400, { message: error.message });
