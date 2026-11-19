@@ -187,6 +187,8 @@ h1 { font-size: 29px; line-height: 1.2; font-weight: 650; letter-spacing: -.9px;
 .partner-payment-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .partner-link { border: 0; padding: 0; background: transparent; color: var(--accent); font-size: inherit; text-align: left; }
 .partner-link:hover { text-decoration: underline; }
+.partner-owed-to-you { background-color: #ecfdf3; }
+.partner-owed-to-partner { background-color: #fef2f2; }
 
 .partner-channel { background: var(--paper); border: 1px solid var(--line); border-radius: 7px; padding: 14px 20px; }
 .partner-channel-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }

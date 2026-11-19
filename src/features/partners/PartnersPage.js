@@ -200,6 +200,10 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
   const view = views[tab];
   const rows = tab === 'balances' ? scopedPartners.map(partner => ({
     id: partner.id, partnerId: partner.id,
+    cellClasses: {
+      'Owed to you': amounts.get(partner.id).owedToYou > 0 ? 'partner-owed-to-you' : undefined,
+      'Owed to partner': amounts.get(partner.id).owedToPartner > 0 ? 'partner-owed-to-partner' : undefined,
+    },
     cells: [partner.name, `${partner.splitPercent ?? 100}%`, currency(balance(partner, 'openExposure')), currency(balance(partner, 'settledProfit')), currency(balance(partner, 'yourShare')),
       ...['paymentTotal', 'owedToYou', 'owedToPartner'].map(key => currency(amounts.get(partner.id)[key]))],
   })) : tab === 'reports' ? scopedBets.map(bet => {
@@ -287,7 +291,7 @@ export default function PartnersPage({ partners: connectedPartners = [], bets, p
         onSave={addPayment} onCancel={() => setAddingPayment(false)} /></div>}
       {tab === 'payments' && ledger.loading && <p className="panel-controls" role="status">Loading payment history…</p>}
       <div className="table-scroll"><table className="data-table" aria-label={view.title}><thead><tr>{view.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead><tbody>
-        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={view.columns[index]}>
+        {filtered.map(row => <tr key={row.id}>{row.cells.map((cell, index) => <td key={view.columns[index]} className={row.cellClasses?.[view.columns[index]]}>
           {index === 0 && findPartner(row.partnerId) ? <button type="button" className="partner-link" onClick={() => choosePartner(row.partnerId)}>{cell}</button> : cell}
         </td>)}</tr>)}
         {!filtered.length && (tab !== 'payments' || (!ledger.loading && !ledger.error)) && <tr><td colSpan={view.columns.length}><EmptyState icon="users" title={query ? 'No matching records' : view.empty} description={query ? 'Try another search.' : selected ? `Saved records for ${selected.name} will appear here.` : 'Saved partner records will appear here.'} /></td></tr>}
