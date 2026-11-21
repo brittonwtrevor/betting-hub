@@ -32,7 +32,7 @@ export default function MarketPicker({ game, onClose, onAdd }) {
         const direction = market.id.split(':').find(part => part === 'over' || part === 'under');
         return <label key={market.id} className={`market-check ${market.available ? '' : 'market-unavailable'}`}>
           <input type="checkbox" disabled={saving || !market.available} checked={selected.includes(market.id)} onChange={() => toggle(market.id)} />
-          <span>{direction && <span className="market-total-arrow" aria-hidden="true">{direction === 'over' ? '↑' : '↓'} </span>}{market.label}{!market.available && <small>Unavailable in {game.series_format}</small>}</span>
+          <span>{direction && <span className={`market-total-arrow market-total-arrow-${direction}`} aria-hidden="true">{direction === 'over' ? '↑' : '↓'} </span>}{market.label}{!market.available && <small>Unavailable in {game.series_format}</small>}</span>
         </label>;
       })}
     </details>)}</div>

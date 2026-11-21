@@ -6,6 +6,7 @@ import ActiveBetsPage from './features/bets/ActiveBetsPage';
 import SuggestionsPage from './features/suggestions/SuggestionsPage';
 import SportsPage from './features/sports/SportsPage';
 import PartnersPage from './features/partners/PartnersPage';
+import PartnerMessagesPage from './features/messages/PartnerMessagesPage';
 import AnalyticsPage from './features/analytics/AnalyticsPage';
 import ProjectManagementPage from './features/projects/ProjectManagementPage';
 import LukeOriginatorPage from './features/luke/LukeOriginatorPage';
@@ -22,6 +23,7 @@ export default function App() {
     suggestions: <SuggestionsPage />,
     sports: <SportsPage sportId={route.sportId} />,
     partners: <PartnersPage />,
+    messages: <PartnerMessagesPage />,
     analytics: <AnalyticsPage />,
     projects: <ProjectManagementPage />,
     luke: <LukeOriginatorPage />,

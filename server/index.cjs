@@ -23,7 +23,7 @@ const contentTypes = {
 
 const digest = value => createHash('sha256').update(value).digest();
 
-function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService, lukeOriginatorService }) {
+function createHandler({ username, password, directory, requireHttps = true, upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, partnerMessagesService, feedHealthService, projectTasksService, lukeOriginatorService }) {
   if (!username || !password || username.includes(':') || /[\r\n]/.test(username)) {
     throw new Error('Set APP_AUTH_USERNAME and APP_AUTH_PASSWORD before starting Betting Hub.');
   }
@@ -106,6 +106,33 @@ function createHandler({ username, password, directory, requireHttps = true, upc
       } catch (error) {
         if (error.telegramSafe) return json(error.status, { message: error.message });
         return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: error.code === 'DB_NOT_CONFIGURED' ? 'Configure the app database to save Telegram credentials.' : 'Unable to load or save the Telegram connection. Please try again.' });
+      }
+    }
+
+    const partnerMessageRoute = /^\/api\/partner-messages(?:\/([a-f0-9-]{36})(\/retry)?)?$/.exec(pathname);
+    if (partnerMessageRoute) {
+      const [, id, retry] = partnerMessageRoute;
+      const allowed = retry ? ['POST'] : id ? ['GET', 'HEAD'] : ['GET', 'HEAD', 'POST'];
+      if (!allowed.includes(request.method)) return reply(response, 405, 'Method not allowed.\n', { Allow: allowed.join(', ') });
+      const json = (status, value) => reply(response, status, JSON.stringify(value), { 'Content-Type': 'application/json; charset=utf-8' }, head);
+      try {
+        if (!partnerMessagesService) return json(503, { message: 'Partner messaging is unavailable.' });
+        if (['GET', 'HEAD'].includes(request.method)) return json(200, id ? { message: await partnerMessagesService.get(id) } : { messages: await partnerMessagesService.list() });
+        if (request.headers['x-betting-hub'] !== 'partner-messages' || request.headers['sec-fetch-site'] === 'cross-site') return json(403, { message: 'Open Partner Messages in Betting Hub to send a message.' });
+        if (!/^application\/json(?:;|$)/i.test(request.headers['content-type'] || '')) return json(415, { message: 'Partner messages require JSON.' });
+        let size = 0; const chunks = [];
+        for await (const chunk of request) {
+          size += Buffer.byteLength(chunk);
+          if (size > 98304) return json(413, { message: 'This message request is too large.' });
+          chunks.push(Buffer.from(chunk));
+        }
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+        catch { return json(400, { message: 'Invalid message JSON.' }); }
+        return json(retry ? 200 : 201, { message: retry ? await partnerMessagesService.retry(id) : await partnerMessagesService.add(body) });
+      } catch (error) {
+        if (error.partnerMessageSafe || error.telegramSafe) return json(error.status || 400, { message: error.message });
+        return json(error.code === 'DB_NOT_CONFIGURED' ? 503 : 502, { message: 'Unable to load or queue partner messages. Check delivery status before trying again.' });
       }
     }
 
@@ -361,6 +388,7 @@ if (require.main === module) {
     const partnersService = require('./partners.cjs').createPartnersService();
     const projectTasksService = require('./project-tasks.cjs').createProjectTasksService();
     const telegramService = require('./telegram.cjs').createTelegramService();
+    const partnerMessagesService = require('./partner-messages.cjs').createPartnerMessagesService({ partnersService, telegramService });
     const telegramReceiver = require('./telegram-receiver.cjs').createTelegramReceiver({ telegramService, sendsService });
     const confirmsService = require('./confirms.cjs').createConfirmsService({ telegramReceiver, sendsService, telegramService, partnersService });
     const lukeOriginatorService = require('./luke-originator.cjs').createLukeOriginatorService({ confirmsService });
@@ -369,16 +397,18 @@ if (require.main === module) {
       password: process.env.APP_AUTH_PASSWORD,
       directory: path.join(__dirname, '..', development ? 'public' : '_static'),
       requireHttps: !development && process.env.APP_ALLOW_HTTP !== 'true',
-      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, feedHealthService, projectTasksService, lukeOriginatorService,
+      upcomingGamesService, hockeyGamesService, sendsService, telegramService, telegramReceiver, confirmsService, partnersService, partnerMessagesService, feedHealthService, projectTasksService, lukeOriginatorService,
     });
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer(handler).listen(port, development ? '127.0.0.1' : '0.0.0.0', () => {
       console.log(`Betting Hub listening on port ${port}; authentication required.`);
       telegramReceiver.start();
       confirmsService.start();
+      partnerMessagesService.start();
     });
     async function shutdown() {
       server.close();
+      await partnerMessagesService.close();
       await confirmsService.close();
       await telegramReceiver.close();
       await Promise.allSettled([telegramService.close(), sendsService.close(), upcomingGamesService.close(), hockeyGamesService.close(), partnersService.close(), feedHealthService.close(), projectTasksService.close(), lukeOriginatorService.close()]);
