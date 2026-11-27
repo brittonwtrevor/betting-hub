@@ -22,6 +22,7 @@
 .send-markets input::placeholder, .send-notes textarea::placeholder { color: #000; opacity: 1; }
 .send-card-details td { white-space: normal; }
 .send-card-details fieldset { display: flex; flex-wrap: wrap; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.send-recipient-actions { flex-basis: 100%; }
 .send-card-details th, .send-notes th { font-size: 13px; font-weight: 550; vertical-align: top; }
 .send-recipient {
   --checkbox-fill: #fff0a8;

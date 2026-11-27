@@ -95,6 +95,11 @@ function SendCard({ draft, registeredPartners, partnersReady, onSave, onSend, on
           <td colSpan={manual ? 1 : 4}>
             <fieldset disabled={busy || !partnersReady}>
               <legend className="sr-only">Partners / Telegram groups</legend>
+              {!!partners.length && <div className="send-recipient-actions">
+                <button type="button" className="button button-secondary"
+                  disabled={partners.every(partner => edited.recipients.some(item => identifies(partner, item.id)))}
+                  onClick={() => change({ ...edited, recipients: partners })}>Select all partners</button>
+              </div>}
               {!partners.length && <p><a href="#/partners">Add partners and groups in Partner Accounting →</a></p>}
               {partners.map(partner => {
                 const channel = partner.telegramChannel?.trim().toLowerCase();
